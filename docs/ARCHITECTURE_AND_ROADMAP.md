@@ -14,6 +14,7 @@
 - 不要求项目自建 Gateway。
 - 不把 SSH 密钥发送到项目控制的服务器。
 - 所有工作区、Vault、SSH 和 SFTP 逻辑都在浏览器端执行。
+- 未来云同步默认关闭，只交换端到端加密对象，不参与 SSH/SFTP 数据面。
 
 允许的发布形态：
 
@@ -23,6 +24,9 @@
 
 “纯前端”不等于“所有普通网页都拥有原始 TCP 权限”。真实 SSH 是否可以
 直连，取决于浏览器宿主是否提供 socket API。
+
+Node.js、pnpm、Vite 和 IWA bundling tool 可以作为构建工具；“无后端”约束的是
+产品运行时和连接路径，不是要求开发过程不使用 Node.js。
 
 ## 2. 产品定义
 
@@ -35,6 +39,7 @@
 - 浏览器端加密 Vault。
 - 完全静态、可离线安装。
 - 直接连接标准 SSH server 时不经过项目服务器。
+- 后续可选同步加密配置，但本地始终是事实来源。
 
 非目标：
 
@@ -43,6 +48,9 @@
 - RDP/VNC 第一版。
 - 项目托管的 SSH Relay。
 - AI 优先。
+
+完整产品、视觉和交互规范见
+[产品蓝图与体验规范](PRODUCT_BLUEPRINT.md)。
 
 ## 3. 总体架构
 
@@ -80,6 +88,15 @@ flowchart TB
     DB[("IndexedDB<br/>profiles / workspace / metadata")]
     OPFS[("OPFS<br/>encrypted blobs / temp files")]
     CRYPTO["WebCrypto + Argon2id WASM<br/>Browser Vault"]
+    JOURNAL["Encrypted Change Journal"]
+  end
+
+  subgraph OptionalSync["Optional Sync Control Plane"]
+    SYNC["Sync Engine Worker"]
+    PROVIDER["Local / WebDAV / Self-hosted / Cloud Adapter"]
+    REMOTE[("Opaque encrypted objects")]
+    SYNC --> PROVIDER
+    PROVIDER -. optional .-> REMOTE
   end
 
   TAD <--> SSH
@@ -88,10 +105,16 @@ flowchart TB
   WORK <--> Storage
   CRYPTO --> DB
   CRYPTO --> OPFS
+  DB --> JOURNAL
+  JOURNAL -. local-first .-> SYNC
   DIRECT --> HOST["Standard SSH/SFTP Server"]
   CHROME --> HOST
   RELAY -. WebSocket .-> HOST
 ```
+
+`OptionalSync` 永远不连接 `SocketLayer`、OpenSSH Worker 或目标服务器。同步模型、
+密钥层级和冲突策略见
+[本地 Vault、端到端加密同步与安全边界](SYNC_AND_SECURITY.md)。
 
 ## 4. 两个完全不同的 WASM Runtime
 
@@ -172,9 +195,9 @@ export interface SocketTransport {
 运行环境：Chromium IWA。
 
 ```ts
-const socket = new TCPSocket(host, {
-  remotePort: port,
+const socket = new TCPSocket(host, port, {
   noDelay: true,
+  keepAlive: true,
   keepAliveDelay: 30_000,
 });
 
@@ -369,7 +392,7 @@ export interface TerminalEngine {
 - fit。
 - search。
 - serialize。
-- Unicode。
+- unicode11。
 - clipboard。
 
 后续：
@@ -377,6 +400,7 @@ export interface TerminalEngine {
 - image。
 - web links。
 - ligatures。
+- experimental unicode-graphemes。
 
 ### wterm 晋级门槛
 
@@ -547,6 +571,7 @@ IndexedDB：
 - profile/workspace/snippet metadata。
 - 加密 Vault records。
 - capability snapshot。
+- encrypted change journal、tombstones 和 sync cursor。
 
 OPFS：
 
@@ -577,6 +602,12 @@ OPFS：
 
 实际字段以目标 Chrome/IWA 版本官方文档为准。
 
+访问 RFC1918/private 或 loopback 地址还受额外网络权限控制。Direct Sockets
+spec 使用 `local-network`/`loopback-network` policy-controlled feature，
+Chrome 文档在部分场景使用 `direct-sockets-private`。Phase 0 必须针对锁定的
+Chrome 版本验证真实 manifest 字段和授权 UI，不能假定 `direct-sockets` 自动允许
+局域网与本机地址。
+
 ### 11.2 构建
 
 ```text
@@ -593,6 +624,14 @@ pnpm build
 - CI 只在受保护环境访问签名服务/硬件。
 - key rotation 流程在公开发布前演练。
 - `.swbn` 和 update manifest 都生成 checksum。
+
+分发要求：
+
+- Chrome 143 起，ChromeOS Admin Panel 只能安装/更新 allowlist 中的 IWA。
+- 其他操作系统从 IWA 初始支持开始也受 allowlist 约束。
+- 开发模式仍可通过 `chrome://web-app-internals` 安装和测试。
+- Phase 0 必须同步确认 allowlist/early adopter 资格；“开发模式可运行”不能替代
+  “普通目标用户可安装和持续更新”。
 
 ### 11.3 CSP
 
@@ -641,6 +680,7 @@ React/Zustand：
 - 设置。
 - 低频 session 状态。
 - 限频后的传输进度。
+- 同步状态、冲突数量和最近成功时间。
 
 Worker/session runtime：
 
@@ -691,6 +731,10 @@ Worker/session runtime：
 - 不在 React 中保存目录全量派生对象。
 - 缩略图和搜索放 Worker。
 
+发布门槛、参考设备、热路径、backpressure 和 benchmark fixture 统一见
+[性能工程与验收基线](PERFORMANCE_ENGINEERING.md)。“高性能”必须由 cold/warm
+启动、输入 p95、ANSI replay、20 sessions 和 1 GiB SFTP 数据证明。
+
 ## 15. 安全模型
 
 ### 15.1 主要攻击面
@@ -703,6 +747,8 @@ Worker/session runtime：
 - 已解锁页面被恶意扩展读取。
 - Direct Sockets 被滥用于扫描内网。
 - 用户忽略 host key 警告。
+- 同步 provider 泄露、篡改、回放或隐藏加密对象。
+- 新设备加入或恢复密钥流程被劫持。
 
 ### 15.2 控制
 
@@ -718,6 +764,9 @@ Worker/session runtime：
 - Vault 自动锁定。
 - 日志不包含密码、私钥和终端内容。
 - Clipboard 操作需要明确用户手势。
+- 同步对象在客户端加密，provider 只保存 opaque ciphertext。
+- 设置同步与 secrets 同步分开授权。
+- 已见 revision、tombstone 和 conflict copy 防止静默覆盖。
 
 ### 15.3 Host key
 
@@ -755,6 +804,11 @@ oh_myssh/
     sftp/
     vault/
     storage/
+    sync/
+      engine/
+      local/
+      webdav/
+      protocol/
     workspace/
     ui/
   third_party/
@@ -779,13 +833,18 @@ oh_myssh/
 工具：
 
 - pnpm workspace。
-- Vite。
-- TypeScript strict。
-- Vitest。
-- Playwright。
+- React 19.2.x。
+- Vite 8.1.x。
+- TypeScript 7.0.x strict。
+- Tailwind CSS 4 + Radix Primitives。
+- Zustand 5 + Dexie 4。
+- Biome 2.5。
+- Vitest 4。
+- Playwright 1.61。
 - Chrome IWA dev mode。
-- ESLint/Prettier。
 - Buf/Protobuf 不需要作为首版核心，因为 SSH 自己处理 wire protocol。
+
+版本是 2026-07-23 的启动基线；实现时 exact pin 并由 lockfile 固定。
 
 ## 17. 路线图
 
@@ -808,6 +867,7 @@ oh_myssh/
 - 网络抓包显示浏览器直接连接目标 TCP/22。
 - 没有本地 Agent 和项目 Gateway。
 - 终端能运行 `uname -a`、`vim`、`top`。
+- 记录 IWA allowlist/early adopter 的真实申请与目标用户安装路径。
 
 若失败：
 
@@ -890,7 +950,28 @@ oh_myssh/
 - 所有平台限制如实展示。
 - 用户可以判断当前是 Direct、Chrome Sockets、Relay 或 Unsupported。
 
-### Phase 5：兼容与扩展
+### Phase 5：可选端到端加密同步，4–6 周
+
+前置条件：Local Vault、导出/恢复、schema migration 和冲突恢复已经稳定。
+
+交付：
+
+- encrypted change journal。
+- SyncProvider adapter。
+- LocalOnly 和 WebDAV。
+- settings/profile/workspace 的 E2EE sync。
+- secrets sync 独立授权。
+- tombstone、ETag conditional write 和 conflict copy。
+- recovery-key 新设备加入。
+
+退出条件：
+
+- provider 数据库只看到 opaque ciphertext 和最小 metadata。
+- 关闭同步或 provider 离线不影响本地 SSH。
+- 两设备并发修改可确定合并并保留冲突版本。
+- SSH/SFTP/terminal 流量从未进入 sync engine。
+
+### Phase 6：兼容与扩展
 
 - 普通 PWA RelayTransport。
 - WebAuthn PRF。
@@ -928,6 +1009,8 @@ oh_myssh/
 23. `nasftp` compatibility spike。
 24. SFTP streams API。
 25. Signed Web Bundle build。
+26. ANSI/CJK/multi-session performance harness。
+27. IWA allowlist 和目标用户分发验证。
 
 在第 3、4、6、7、12 项完成前，不开发 RDP/VNC、AI 或团队功能。
 
@@ -983,12 +1066,14 @@ oh_myssh/
 - Vault ciphertext inspection。
 - 无远程 JS。
 - Direct Sockets 只由用户操作触发。
+- 同步 provider 篡改/回放测试。
+- settings sync 与 secrets sync 授权隔离。
 
 ## 20. 主要风险
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| IWA 生产分发范围有限 | 普通用户无法安装直连版 | Phase 0 先确认目标渠道；保留 PWA/relay 兼容 |
+| IWA 需要 early adopter/allowlist | 普通用户无法安装或更新直连版 | Phase 0 同时验证申请、安装和更新渠道 |
 | Direct Sockets 权限变化 | 无法 TCP/22 | transport adapter；持续跟踪 Chromium |
 | `ssh_client` 与 nassh 耦合 | 集成成本高 | 先适配 wassh，不重写 OpenSSH |
 | OpenSSH WASM 体积/冷启动 | 首屏慢 | Worker 预热、缓存、分包、基准门槛 |
@@ -997,6 +1082,8 @@ oh_myssh/
 | wterm 兼容不足 | 中文/全屏应用错误 | xterm.js 默认 |
 | 普通 PWA 被误认为可直连 | 产品承诺错误 | capability matrix 和明确文案 |
 | 依赖供应链 | Vault/私钥泄露 | 固定依赖、SBOM、无远程代码、可复现 build |
+| 云同步侵入 SSH 数据面 | 破坏零后端和隐私承诺 | SyncProvider 只能处理 opaque object，架构无 runtime 引用 |
+| E2EE 冲突/恢复失败 | 多设备数据丢失 | local-first、tombstone、conflict copy、恢复包 |
 
 ## 21. 项目当前技术决策
 
@@ -1010,6 +1097,10 @@ oh_myssh/
 6. Wasmer WASIX 只做离线 Shell。
 7. Browser Vault 代替 OS Keychain。
 8. 不实现项目后端和本地 Agent。
+9. Local-first；未来同步默认关闭且不参与 SSH 数据面。
+10. settings/profile 与 Identity secret 分开授权同步。
+11. React 只管理低频产品状态，字节流只存在于 runtime。
+12. 性能、分发和安全使用硬门槛，不以功能数量替代。
 
 仍需验证，而不是口头假设：
 
@@ -1018,5 +1109,6 @@ oh_myssh/
 3. `nasftp` 的 React 可适配性。
 4. OpenSSH WASM 总体积和冷启动。
 5. Vault 安全等级能否被目标用户接受。
+6. IWA allowlist/early adopter 是否覆盖实际目标用户。
 
-Phase 0 的意义就是先用真实代码回答这五个问题。
+Phase 0 的意义就是先用真实代码和真实分发流程回答这些问题。

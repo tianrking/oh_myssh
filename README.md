@@ -1,114 +1,144 @@
-# oh_myssh
+# Oh My SSH
 
-一个严格纯前端、浏览器原生的 SSH/SFTP 工作区。
+> WebSSH 的直接，Xshell 的连接能力，MobaXterm 的工作区，以及现代 Web 产品的体验。
 
-> 不可改变的项目边界：运行时代码只有 HTML、CSS、TypeScript、WebAssembly
-> 和浏览器 API；不包含 Go、Node/Python 后端、本地 Agent 或自建 Gateway。
+**Oh My SSH** 是一个本地优先、严格纯前端的 SSH/SFTP 工作区。用户输入任意
+`user@host:port`，应用在浏览器进程内运行 OpenSSH WebAssembly，并在支持
+Direct Sockets 的 Chromium Isolated Web App（IWA）中直接连接目标 TCP/22。
 
-项目希望把 Xshell、MobaXterm 和 Tabby 的工作效率带到浏览器，同时保持
-离线安装、静态托管和端侧处理。
+当前状态：**技术预研与产品定义完成，等待 Phase 0 可行性验证。**
 
-当前状态：研究与架构阶段。
+## 不可改变的边界
 
-## 核心技术路线
+- 产品运行时只有 HTML、CSS、TypeScript、JavaScript、WebAssembly 和浏览器 API。
+- 不包含 Go、Rust、Node.js 或 Python 后端服务。
+- 不安装本地 Agent，不依赖项目自建 SSH Gateway。
+- SSH、SFTP、私钥解密和终端数据都在用户设备上处理。
+- 第一版完全离线可用；未来云同步是可选控制面，不代理 SSH 流量。
+- 普通网页没有任意原始 TCP 权限，不能假装能够直接连接标准 SSH 服务。
+
+Node.js、pnpm 和 Vite 只用于构建静态资源，不是产品运行时后端。
+
+## 产品形态
 
 ```mermaid
-flowchart TB
-  subgraph Browser["纯前端浏览器应用"]
-    UI["React + TypeScript + Vite<br/>Tabs / Splits / Hosts / SFTP"]
-    TERM["TerminalEngine<br/>xterm.js + WebGL 默认<br/>wterm 实验"]
-    SSH["OpenSSH WASM Runtime<br/>Chromium ssh_client + wassh"]
-    SFTP["Browser SFTP Client"]
-    SHELL["Wasmer WASIX Worker<br/>离线受限 Shell"]
-    VAULT[("IndexedDB + OPFS<br/>加密 Vault / Workspaces")]
+flowchart LR
+  USER["用户输入<br/>user@host:port"] --> APP
 
-    UI --> TERM
+  subgraph APP["Oh My SSH — 纯前端"]
+    UI["React 工作区<br/>Hosts / Tabs / Splits / SFTP"]
+    TERM["xterm.js + WebGL<br/>生产终端"]
+    SSH["OpenSSH WASM<br/>ssh_client + wassh"]
+    STORE[("IndexedDB + OPFS<br/>加密 Vault")]
+    SYNC["Sync Adapter<br/>默认 Local-only"]
+
+    UI <--> TERM
     TERM <--> SSH
-    SSH --> SFTP
-    SHELL --> TERM
-    VAULT --> UI
-    VAULT --> SSH
+    UI <--> STORE
+    STORE <--> SYNC
   end
 
-  subgraph Sockets["浏览器 Socket 适配层"]
-    DIRECT["DirectSocketsTransport<br/>Chromium IWA"]
-    CHROME["ChromeSocketsTransport<br/>兼容的 Chrome 包装环境"]
-    RELAY["RelayTransport<br/>普通网页的可选兼容模式"]
-  end
-
-  SSH --> DIRECT
-  SSH --> CHROME
-  SSH -. optional .-> RELAY
-  DIRECT --> HOST["标准 SSH/SFTP 服务器 TCP/22"]
-  CHROME --> HOST
-  RELAY -. WebSocket relay .-> HOST
+  SSH --> SOCKET["Direct Sockets<br/>IWA"]
+  SOCKET --> HOST["任意标准 SSH/SFTP Server<br/>TCP/22"]
+  SYNC -. "未来：仅同步端到端加密数据" .-> CLOUD["可选同步服务"]
 ```
 
-这不是用 WASM 模拟 SSH。核心直接使用 OpenSSH 的 WebAssembly 移植：
+SSH 数据面与云同步控制面永久分离：
 
-- Chromium `ssh_client`：OpenSSH 的 WASM/WASI 版本。
-- Chromium `wassh`：把 OpenSSH 的 POSIX/WASI 调用桥接到浏览器 API。
-- 浏览器 Socket adapter：决定 SSH 字节最终走 Direct Sockets、Chrome
-  Sockets，还是用户显式配置的第三方 relay。
+```text
+SSH/SFTP：浏览器  ──────────────────────>  目标服务器
+云同步： 浏览器  <── 端到端加密密文 ──>  可选同步服务
+```
 
-## 浏览器能力边界
+云同步服务永远看不到 SSH 密码、私钥明文、终端内容，也不参与 SSH 连接。
 
-| 运行形态 | 是否纯前端 | 真实 SSH | 是否需要 Relay |
-|---|---:|---:|---:|
-| 普通 HTTPS/PWA | 是 | 浏览器不能直接 TCP/22 | 是 |
-| Chromium IWA + Direct Sockets | 是 | 可以直接连接标准 SSH | 否 |
-| 兼容 Chrome Sockets 的安装包 | 是 | 可以直接连接标准 SSH | 否 |
-| WASIX 离线 Shell | 是 | 不是远程 SSH | 否 |
+## 发行矩阵
 
-项目的核心目标是 Chromium Isolated Web App（IWA）：
+| 形态 | 真实 SSH | 是否需要 Relay | 用途 |
+|---|---:|---:|---|
+| Chromium IWA + Direct Sockets | 是，直连 TCP/22 | 否 | 主产品 |
+| 普通静态 PWA | 浏览器不能直连 TCP/22 | 是 | 离线工作区、演示和可选兼容 |
+| 用户显式配置第三方 Relay | 是 | 是 | 兼容模式，不是默认架构 |
+| Wasmer WASIX 离线 Shell | 不是远程 SSH | 否 | 后续实验能力 |
 
-- 静态资源打包为签名 Web Bundle。
-- React、OpenSSH WASM、终端和 Vault 全部在本地运行。
-- 使用 Direct Sockets 直接连接 TCP/22。
-- 不经过我们控制的服务器。
-- 普通 PWA 构建仍然保留，但直连 SSH 功能会显示平台不支持。
+IWA/Direct Sockets 目前仍有生产分发和 allowlist 限制。这是项目的首要风险，
+必须在制作完整 UI 前用真实安装包和真实 SSH 服务完成验证。
 
-IWA/Direct Sockets 当前仍存在浏览器分发范围限制，因此它既是项目的关键
-技术机会，也是首要产品风险。
+## 锁定的技术路线
 
-## 第一版范围
+| 层 | 选择 | 原因 |
+|---|---|---|
+| 产品 UI | React 19 + TypeScript strict + Vite 8 | 成熟、快速、适合复杂桌面工作区 |
+| 样式系统 | Tailwind CSS 4 + CSS variables + Radix Primitives | 高密度、一致、可访问且容易主题化 |
+| 字体 | 本地打包 Geist Sans；终端使用 Geist Mono 与系统 CJK fallback | 精确、现代，不产生远程字体请求 |
+| 终端 | xterm.js 6 + WebGL | 首版可靠性、Unicode、IME 和吞吐优先 |
+| 实验终端 | wterm/Ghostty WASM adapter | 验证未来渲染器，不阻塞生产版本 |
+| SSH | Chromium `ssh_client` + `wassh` + `wasi-js-bindings` | 复用真正的 OpenSSH WASM，不重写 SSH 协议 |
+| Socket | `SocketTransport` adapter | 隔离 Direct Sockets、兼容模式和能力检测 |
+| SFTP | 优先适配 Chromium `nasftp` | 使用结构化协议，不解析 CLI 文本 |
+| 状态 | Zustand 只保存低频 UI 状态 | 终端字节和文件数据不进入 React 状态 |
+| 存储 | IndexedDB/Dexie + OPFS | 元数据事务与大文件流分离 |
+| Vault | Argon2id WASM + WebCrypto AES-256-GCM | 本地加密、版本化参数和逐记录认证加密 |
+| 并发 | Web Workers + Streams + transferable/SAB | SSH、SFTP、KDF 不阻塞主线程 |
+| 工程 | pnpm workspace + Biome + Vitest + Playwright | 快速、一致、可自动验证 |
 
-1. React 工作区、标签页和分屏。
-2. xterm.js + WebGL 生产终端。
-3. OpenSSH WASM 登录标准 SSH 服务器。
-4. 密码和导入私钥认证。
-5. host key 指纹确认和 `known_hosts`。
-6. 浏览器端加密 Vault。
-7. 基础 SFTP 列表、上传、下载和取消。
-8. IWA 打包、签名和离线安装。
+依赖版本会锁定在 lockfile 中；表中的主版本是 2026-07-23 的技术基线，
+不是允许自动漂移的范围。
 
-暂不进入第一版：
+## 第一版能力
 
-- RDP/VNC。
-- 企业 PAM、团队 RBAC 和审计平台。
-- 操作系统真实 PTY、WSL、PowerShell。
-- 系统钥匙串和原生 `ssh-agent`。
-- AI 助手。
-- 项目自建的 SSH Relay 服务。
+- 任意主机快速连接：hostname、port、username。
+- 密码、Ed25519、RSA 和加密私钥。
+- 首次 host key 指纹确认，变化时 fail closed。
+- 主机收藏、分组、搜索、标签、ProxyJump 数据模型。
+- 标签、多层分屏、布局保存、快捷键和命令面板。
+- xterm.js/WebGL、CJK、IME、emoji、tmux、vim、鼠标和 bracketed paste。
+- 双栏 SFTP、流式上传/下载、取消、覆盖确认和传输队列。
+- 命令片段、历史搜索和多会话广播的安全确认。
+- 浏览器加密 Vault、自动锁定、恢复包和显式导入/导出。
+- IWA 离线安装、签名更新、能力诊断和崩溃恢复。
 
-## 关键事实
+第一版不做 RDP/VNC、企业 PAM、团队审计、本机 PTY/WSL、AI 助手或官方
+SSH Relay。
 
-- xterm.js 和 wterm 是终端显示器，不是 SSH 协议实现。
-- OpenSSH WASM 才是真正的 SSH 客户端。
-- 普通网页没有原始 TCP 权限。
-- Direct Sockets 可以提供 TCP/UDP，但仅限高信任的 IWA 环境。
-- 浏览器纯前端不能读取操作系统钥匙串；私钥必须由浏览器 Vault 管理。
-- Port Forwarding 只在底层 transport 提供真实 socket 能力时可用。
+## 性能原则
+
+- 终端字节永不进入 React props、Context、Zustand 或普通日志。
+- OpenSSH、SFTP、Argon2id 和离线 WASIX 分别运行在 Worker。
+- xterm.js 使用 WebGL；输出按帧批处理并由写入回调提供背压。
+- cross-origin isolated 时使用 SharedArrayBuffer ring buffer，否则使用
+  transferable `ArrayBuffer`。
+- 隐藏会话停止绘制但继续有界消费网络数据。
+- SFTP 全程使用 Streams/OPFS，大文件不完整装入内存。
+- 所有性能结论必须由固定 ANSI replay、真实 SSH 和大文件传输基准证明。
+
+详细预算见[性能工程与验收基线](docs/PERFORMANCE_ENGINEERING.md)。
+
+## 路线图
+
+1. **Phase 0 / 生死验证**：IWA `TCPSocket` → TCP/22 → OpenSSH WASM →
+   xterm.js，真实服务器登录成功。
+2. **Phase 1 / SSH Core**：认证、host key、Vault、连接生命周期和错误模型。
+3. **Phase 2 / Workspace**：主机树、标签、分屏、快捷命令和布局恢复。
+4. **Phase 3 / SFTP 与发布**：流式文件管理、签名 IWA、CSP、SBOM。
+5. **Phase 4 / Public Beta**：兼容矩阵、诊断、性能回归和恢复流程。
+6. **Phase 5 / 可选云同步**：端到端加密 profiles/settings；密钥同步单独授权。
+7. **Phase 6 / 扩展**：ProxyJump、端口转发、WebAuthn PRF、wterm/WASIX 实验。
+
+任何完整 UI 开发都不能绕过 Phase 0。若目标用户无法安装 IWA，或
+`ssh_client/wassh` 无法稳定接入 Direct Sockets，必须先重新评估产品分发，
+而不是用宣传文案掩盖平台限制。
 
 ## 文档
 
-- [纯前端开源项目研究与复用决策](docs/OPEN_SOURCE_RESEARCH.md)
+- [产品蓝图与体验规范](docs/PRODUCT_BLUEPRINT.md)
 - [纯前端架构、平台边界与路线图](docs/ARCHITECTURE_AND_ROADMAP.md)
+- [性能工程与验收基线](docs/PERFORMANCE_ENGINEERING.md)
+- [本地 Vault、端到端加密同步与安全边界](docs/SYNC_AND_SECURITY.md)
+- [开源项目研究与复用决策](docs/OPEN_SOURCE_RESEARCH.md)
 
-## License
+## 许可证
 
-项目许可证尚未确定。在许可证落地前，不接受复制自其他项目的代码。
-
-目前重点依赖候选包括 BSD-3-Clause 的 Chromium libapps、MIT 的 xterm.js
-和 Wasmer JS，以及 Apache-2.0 的 wterm。开始编码前应确定项目许可证并
-建立第三方许可证清单。
+项目许可证尚未由仓库所有者最终确认。建议采用 Apache-2.0，并在开始复制或
+改造第三方代码前建立 `THIRD_PARTY_NOTICES.md`、SBOM 和依赖来源锁定。
+Chromium libapps 为 BSD-3-Clause，xterm.js 为 MIT，wterm 为 Apache-2.0。

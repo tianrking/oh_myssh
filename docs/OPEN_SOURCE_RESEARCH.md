@@ -5,6 +5,25 @@
 本文严格按照“只有浏览器前端，没有 Go、Node/Python 后端、本地 Agent
 或项目自建 Gateway”的产品边界重新整理。
 
+## 0. 2026-07-23 研究快照
+
+| 项目 | 当前观察版本 | 在本项目中的角色 |
+|---|---|---|
+| Chromium libapps/nassh | `nassh-0.79` | OpenSSH WASM/WASI/socket 权威底座 |
+| xterm.js | `6.0.0` | 生产 terminal renderer |
+| wterm | `0.2.1` | 实验 renderer |
+| `@wasmer/sdk` | `0.10.0` | 后续 WASIX 离线 Shell |
+| React | `19.2.8` | 产品 UI |
+| Vite | `8.1.5` | 静态构建、Worker/WASM bundling |
+| Electerm | `3.15.159` | 产品信息架构参考 |
+| Tabby | `1.0.235` | profile/split/快捷键参考 |
+| Nexterm | `1.2.2-BETA` | 现代工作区参考，不复用服务端 |
+
+版本仅表示研究当天的快照。真正实现时必须 exact pin、记录上游 revision，
+并通过自动化升级 PR 更新，而不能把此表当作浮动依赖范围。Chromium libapps 的
+GitHub mirror release 信息可能落后，必须以
+[Git at Google 官方仓库](https://chromium.googlesource.com/apps/libapps/)为准。
+
 ## 1. 最重要的研究结论
 
 纯前端真实 SSH 可以实现，已经有权威的开源实现证明：
@@ -61,7 +80,9 @@ Direct Sockets / Chrome Sockets / optional relay
 Chromium
 [Direct Sockets](https://developer.chrome.com/docs/iwa/direct-sockets)
 允许 Isolated Web App 创建 `TCPSocket`、`TCPServerSocket` 和
-`UDPSocket`。官方明确把 SSH、Telnet、RDP 和 IoT 协议列为使用场景。
+`UDPSocket`。[WICG specification](https://wicg.github.io/direct-sockets/)
+定义了 Streams、BYOB、private/local address permission 等底层行为。Chrome
+官方明确把 SSH、Telnet、RDP 和 IoT 协议列为使用场景。
 
 IWA 特性：
 
@@ -75,11 +96,15 @@ IWA 特性：
 限制：
 
 - IWA 与 Direct Sockets 仍不是所有浏览器、所有用户都能无门槛安装。
-- 官方当前生产开放重点仍是受管理 ChromeOS 和选择性合作环境。
-- Chrome/ChromeOS 120+ 可通过开发模式测试 IWA。
+- Chrome 143 起，ChromeOS Admin Panel 只允许安装/更新
+  [allowlist](https://developer.chrome.com/docs/iwa/allowlist) 中的 IWA。
+- 其他操作系统从 IWA 初始支持起也受官方 allowlist 约束。
+- 未进入 early adopter program 的开发者通常没有申请入口；开发模式不受此限制。
+- Chrome/ChromeOS 120+ 可通过 `chrome://web-app-internals` 开发模式测试 IWA。
 - 项目必须把“技术可行”和“可面向所有普通用户分发”分开表述。
 
-结论：IWA 是纯前端直连 SSH 的主技术方向，但分发成熟度是 P0 风险。
+结论：IWA 是纯前端直连 SSH 的主技术方向，但能否进入 allowlist、普通用户如何
+安装和更新，是与代码可行性同等重要的 P0 风险。
 
 ### 2.3 Chrome Secure Shell 路线
 
@@ -198,7 +223,8 @@ xterm.js 官方支持：
 - `@xterm/addon-fit`
 - `@xterm/addon-search`
 - `@xterm/addon-serialize`
-- Unicode、clipboard、image 按需开启。
+- unicode11、clipboard 按需开启；experimental unicode-graphemes 和 image
+  通过兼容/性能测试后再启用。
 
 终端 renderer 与 SSH runtime 必须分离：
 
@@ -209,8 +235,8 @@ xterm.js.onData(input)       -> OpenSSH stdin
 
 ### 4.2 wterm
 
-wterm 的 Zig/WASM 核心、DOM renderer、dirty-row 更新和原生文本选择值得持续
-验证，但不能直接成为首版默认。
+wterm 0.2.x 的 Zig/WASM core、DOM renderer、dirty-row 更新、原生文本选择和
+可选 `@wterm/ghostty` backend 值得持续验证，但不能直接成为首版默认。
 
 研究日期时仍存在官方问题：
 
@@ -219,6 +245,8 @@ wterm 的 Zig/WASM 核心、DOM renderer、dirty-row 更新和原生文本选择
 - [宽字符 continuation cell](https://github.com/vercel-labs/wterm/issues/71)
 - [宽字符光标宽度](https://github.com/vercel-labs/wterm/issues/54)
 - [Ghostty scrollback 未实现路径](https://github.com/vercel-labs/wterm/issues/91)
+
+以上问题在 2026-07-23 仍为 open。
 
 结论：保留 `WtermEngine`，通过 feature flag 测试。
 
@@ -236,7 +264,7 @@ hterm 是 Chromium Secure Shell 和 ChromeOS Terminal 的终端实现。
 ## 5. 离线 Shell 参考
 
 [Wasmer JavaScript SDK](https://github.com/wasmerio/wasmer-js)
-可以在浏览器运行 WASI/WASIX package。
+的当前浏览器入口是 `@wasmer/sdk`，可以运行 WASI/WASIX package。
 
 采用范围：
 
@@ -367,6 +395,26 @@ Offline local:  Wasmer WASIX
 
 Tabby Web 的 Gateway 方案仅作为普通 PWA relay compatibility 的设计参考，
 不是 `oh_myssh` 的核心部署方式。
+
+### 7.4 云同步产品参考
+
+Electerm 已支持把 bookmarks、themes 和 quick commands 同步到 GitHub/Gitee
+secret Gist、WebDAV、自定义服务或 Electerm Cloud。Tabby 的 `sync-config` 和
+`ssh-keymap` 插件证明了两个有价值的产品模式：
+
+- 同步 provider 应该可替换，不能锁死官方云端。
+- 可同步的 Identity 名称与设备本地私钥路径必须解耦。
+
+Oh My SSH 借鉴 provider adapter 和 identity mapping，但不会直接复用它们的格式：
+
+- 本地优先，未登录也完整可用。
+- 所有远端对象在客户端加密。
+- settings/profile 默认可同步，private key/password 单独授权。
+- terminal scrollback、SFTP 文件和恢复材料永不同步。
+- 同步服务不代理 SSH。
+
+详细协议见
+[本地 Vault、端到端加密同步与安全边界](SYNC_AND_SECURITY.md)。
 
 ## 8. Browser Vault
 
