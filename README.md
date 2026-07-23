@@ -1,104 +1,114 @@
 # oh_myssh
 
-一个面向个人开发者和小团队的现代 Web SSH/SFTP 工作区。
+一个严格纯前端、浏览器原生的 SSH/SFTP 工作区。
 
-它不是把 `ssh` 命令简单塞进网页，也不是另一个沉重的企业堡垒机。项目目标是提供接近 Xshell、MobaXterm 和 Tabby 的工作效率，同时保留 Web 应用的跨平台、可自托管、可离线和易分发能力。
+> 不可改变的项目边界：运行时代码只有 HTML、CSS、TypeScript、WebAssembly
+> 和浏览器 API；不包含 Go、Node/Python 后端、本地 Agent 或自建 Gateway。
 
-> 当前状态：研究与架构阶段。仓库暂未进入功能开发。
+项目希望把 Xshell、MobaXterm 和 Tabby 的工作效率带到浏览器，同时保持
+离线安装、静态托管和端侧处理。
 
-## 我们要做什么
+当前状态：研究与架构阶段。
 
-- 现代、流畅的标签页和分屏终端工作区。
-- SSH 主机、分组、跳板机、快捷命令和工作区管理。
-- 与终端并列的双栏 SFTP 文件管理器。
-- 本地优先：断开互联网后仍能管理本机、WSL 和局域网设备。
-- 浏览器不保存私钥正文；优先使用系统钥匙串或 `ssh-agent`。
-- 同一套会话核心支持本地 Agent 和自托管云端 Gateway。
-- 终端引擎可替换，避免被单一渲染器锁死。
-
-## 核心架构
+## 核心技术路线
 
 ```mermaid
 flowchart TB
-  subgraph Browser["浏览器工作区"]
-    UI["React + TypeScript + Vite PWA<br/>Tabs / Splits / Hosts / SFTP"]
+  subgraph Browser["纯前端浏览器应用"]
+    UI["React + TypeScript + Vite<br/>Tabs / Splits / Hosts / SFTP"]
     TERM["TerminalEngine<br/>xterm.js + WebGL 默认<br/>wterm 实验"]
-    WASIX["Wasmer WASIX Worker<br/>受限离线 Shell"]
-    STORE[("IndexedDB + OPFS")]
+    SSH["OpenSSH WASM Runtime<br/>Chromium ssh_client + wassh"]
+    SFTP["Browser SFTP Client"]
+    SHELL["Wasmer WASIX Worker<br/>离线受限 Shell"]
+    VAULT[("IndexedDB + OPFS<br/>加密 Vault / Workspaces")]
+
     UI --> TERM
-    WASIX --> TERM
-    STORE --> UI
+    TERM <--> SSH
+    SSH --> SFTP
+    SHELL --> TERM
+    VAULT --> UI
+    VAULT --> SSH
   end
 
-  subgraph Transport["会话传输"]
-    WS["Binary WebSocket<br/>control / terminal / file"]
-    FLOW["seq / ACK / backpressure / reconnect"]
-    WS --> FLOW
+  subgraph Sockets["浏览器 Socket 适配层"]
+    DIRECT["DirectSocketsTransport<br/>Chromium IWA"]
+    CHROME["ChromeSocketsTransport<br/>兼容的 Chrome 包装环境"]
+    RELAY["RelayTransport<br/>普通网页的可选兼容模式"]
   end
 
-  subgraph Runtime["同一套 Go 会话内核"]
-    LOCAL["terminald local<br/>localhost PWA / Keychain / PTY"]
-    CLOUD["terminald server<br/>long-lived SSH / SFTP / tunnel"]
-  end
-
-  subgraph Targets["目标"]
-    SSH["SSH / SFTP Hosts"]
-    PTY["ConPTY / WSL / Unix PTY"]
-    GUAC["后续：Guacamole<br/>RDP / VNC"]
-  end
-
-  UI --> WS
-  TERM --> WS
-  FLOW --> LOCAL
-  FLOW --> CLOUD
-  LOCAL --> SSH
-  LOCAL --> PTY
-  CLOUD --> SSH
-  CLOUD -.-> GUAC
+  SSH --> DIRECT
+  SSH --> CHROME
+  SSH -. optional .-> RELAY
+  DIRECT --> HOST["标准 SSH/SFTP 服务器 TCP/22"]
+  CHROME --> HOST
+  RELAY -. WebSocket relay .-> HOST
 ```
 
-这不是“React 还是 WASM”的二选一：
+这不是用 WASM 模拟 SSH。核心直接使用 OpenSSH 的 WebAssembly 移植：
 
-- React 负责产品工作区。
-- xterm.js + WebGL 负责第一版生产终端。
-- wterm/Ghostty WASM 放在适配层后验证。
-- Wasmer WASIX 只承担浏览器内受限离线 Shell。
-- 真实 SSH/SFTP、PTY、密钥和端口转发由长驻的 Go 服务处理。
+- Chromium `ssh_client`：OpenSSH 的 WASM/WASI 版本。
+- Chromium `wassh`：把 OpenSSH 的 POSIX/WASI 调用桥接到浏览器 API。
+- 浏览器 Socket adapter：决定 SSH 字节最终走 Direct Sockets、Chrome
+  Sockets，还是用户显式配置的第三方 relay。
+
+## 浏览器能力边界
+
+| 运行形态 | 是否纯前端 | 真实 SSH | 是否需要 Relay |
+|---|---:|---:|---:|
+| 普通 HTTPS/PWA | 是 | 浏览器不能直接 TCP/22 | 是 |
+| Chromium IWA + Direct Sockets | 是 | 可以直接连接标准 SSH | 否 |
+| 兼容 Chrome Sockets 的安装包 | 是 | 可以直接连接标准 SSH | 否 |
+| WASIX 离线 Shell | 是 | 不是远程 SSH | 否 |
+
+项目的核心目标是 Chromium Isolated Web App（IWA）：
+
+- 静态资源打包为签名 Web Bundle。
+- React、OpenSSH WASM、终端和 Vault 全部在本地运行。
+- 使用 Direct Sockets 直接连接 TCP/22。
+- 不经过我们控制的服务器。
+- 普通 PWA 构建仍然保留，但直连 SSH 功能会显示平台不支持。
+
+IWA/Direct Sockets 当前仍存在浏览器分发范围限制，因此它既是项目的关键
+技术机会，也是首要产品风险。
 
 ## 第一版范围
 
-首个可用版本只聚焦：
+1. React 工作区、标签页和分屏。
+2. xterm.js + WebGL 生产终端。
+3. OpenSSH WASM 登录标准 SSH 服务器。
+4. 密码和导入私钥认证。
+5. host key 指纹确认和 `known_hosts`。
+6. 浏览器端加密 Vault。
+7. 基础 SFTP 列表、上传、下载和取消。
+8. IWA 打包、签名和离线安装。
 
-1. 本地 Agent 单文件运行。
-2. SSH 密码、密钥、`ssh-agent` 和 host key 校验。
-3. 标签页、分屏、主机分组和快捷连接。
-4. 双栏 SFTP、上传下载、进度和取消。
-5. 命令片段和工作区恢复。
-6. 无互联网环境下从 `localhost` 完整启动。
+暂不进入第一版：
 
-RDP/VNC、串口、Telnet、团队 PAM、审计平台和 AI 助手暂不进入第一个 MVP。
+- RDP/VNC。
+- 企业 PAM、团队 RBAC 和审计平台。
+- 操作系统真实 PTY、WSL、PowerShell。
+- 系统钥匙串和原生 `ssh-agent`。
+- AI 助手。
+- 项目自建的 SSH Relay 服务。
+
+## 关键事实
+
+- xterm.js 和 wterm 是终端显示器，不是 SSH 协议实现。
+- OpenSSH WASM 才是真正的 SSH 客户端。
+- 普通网页没有原始 TCP 权限。
+- Direct Sockets 可以提供 TCP/UDP，但仅限高信任的 IWA 环境。
+- 浏览器纯前端不能读取操作系统钥匙串；私钥必须由浏览器 Vault 管理。
+- Port Forwarding 只在底层 transport 提供真实 socket 能力时可用。
 
 ## 文档
 
-- [开源项目研究与复用决策](docs/OPEN_SOURCE_RESEARCH.md)
-- [产品架构、协议与路线图](docs/ARCHITECTURE_AND_ROADMAP.md)
-
-## 当前关键决策
-
-- 不 fork 某个大型现有产品，采用绿地架构并复用成熟基础库。
-- 默认终端引擎选择 xterm.js/WebGL，wterm 作为实验实现。
-- 优先交付本地 Agent，而不是先建复杂 SaaS。
-- React 状态层不承载终端字节流。
-- Vercel/CDN 可以承载静态 PWA 和轻量控制面，但长期 SSH 会话必须运行在长驻服务中。
-- 私钥默认不进入浏览器、IndexedDB、OPFS、日志和会话录屏。
+- [纯前端开源项目研究与复用决策](docs/OPEN_SOURCE_RESEARCH.md)
+- [纯前端架构、平台边界与路线图](docs/ARCHITECTURE_AND_ROADMAP.md)
 
 ## License
 
-项目许可证尚未确定。在许可证正式落地前，不接受复制自其他项目的代码。
+项目许可证尚未确定。在许可证落地前，不接受复制自其他项目的代码。
 
-建议在开始功能开发前，从以下策略中明确选择：
-
-- `Apache-2.0`：更利于采用、集成和开放核心商业模式。
-- `AGPL-3.0`：更强调托管服务修改也需要开放源码。
-
-无论选择哪一种，都不能直接混入与目标许可证不兼容的第三方代码。
+目前重点依赖候选包括 BSD-3-Clause 的 Chromium libapps、MIT 的 xterm.js
+和 Wasmer JS，以及 Apache-2.0 的 wterm。开始编码前应确定项目许可证并
+建立第三方许可证清单。

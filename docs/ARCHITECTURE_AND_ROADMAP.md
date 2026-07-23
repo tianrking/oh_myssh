@@ -1,132 +1,347 @@
-# 产品架构、协议与路线图
+# 纯前端架构、平台边界与路线图
 
 状态：Proposed
 
 日期：2026-07-23
 
-## 1. 产品定义
+## 1. 不可改变的项目边界
 
-`oh_myssh` 是一个 local-first、web-native 的 SSH/SFTP 工作区。
+`oh_myssh` 是严格纯前端项目：
 
-核心用户：
+- 运行时代码只有 HTML、CSS、TypeScript、JavaScript 和 WebAssembly。
+- 不包含 Go、Rust/Node/Python 服务进程。
+- 不安装本地 Agent。
+- 不要求项目自建 Gateway。
+- 不把 SSH 密钥发送到项目控制的服务器。
+- 所有工作区、Vault、SSH 和 SFTP 逻辑都在浏览器端执行。
 
-- 同时管理多台 Linux、云服务器、NAS、路由器和开发板的个人开发者。
-- 需要从 Windows、macOS、Linux、平板浏览器进入同一工作区的用户。
-- 希望自托管，但不想部署完整企业 PAM 的小团队。
+允许的发布形态：
 
-核心承诺：
+- 普通静态 PWA。
+- Chromium Isolated Web App（IWA）。
+- 兼容的浏览器扩展/应用包装。
 
-- 快：大量输出、多个终端、分屏拖动和大目录浏览不能明显卡顿。
-- 本地优先：断网后仍然能从 `localhost` 使用完整 SSH/SFTP 工作区。
-- 安全：私钥默认留在系统钥匙串或 `ssh-agent`。
-- 可迁移：终端、SSH 和远程桌面都通过 provider/adapter 接入。
-- 可自托管：云端数据平面不是强制依赖。
+“纯前端”不等于“所有普通网页都拥有原始 TCP 权限”。真实 SSH 是否可以
+直连，取决于浏览器宿主是否提供 socket API。
 
-## 2. 明确不是什么
+## 2. 产品定义
 
-- 不是在浏览器里重新实现完整 Linux。
-- 不是企业堡垒机/PAM 的第一版替代品。
-- 不是远程桌面产品优先。
-- 不是 Electron 桌面客户端优先。
-- 不是 AI Terminal 优先。
-- 不是用 WASM 取代所有 JavaScript、Go 和系统能力。
+目标是一个浏览器中的 Xshell/MobaXterm 类工作区：
 
-## 3. 推荐架构
+- 多标签、多层分屏。
+- SSH profiles、分组、跳板机和快捷命令。
+- 完整终端体验。
+- 双栏 SFTP。
+- 浏览器端加密 Vault。
+- 完全静态、可离线安装。
+- 直接连接标准 SSH server 时不经过项目服务器。
+
+非目标：
+
+- 企业堡垒机/PAM。
+- 浏览器外的真实本机 Shell、PowerShell、WSL 或 PTY。
+- RDP/VNC 第一版。
+- 项目托管的 SSH Relay。
+- AI 优先。
+
+## 3. 总体架构
 
 ```mermaid
 flowchart TB
-  subgraph Browser["Browser Workspace"]
-    UI["Workspace UI<br/>React + TypeScript + Vite PWA"]
-    TAD["Terminal Adapter"]
+  subgraph UI["Workspace UI — Main Thread"]
+    APP["React Application"]
+    WORK["Tabs / Splits / Hosts / SFTP"]
+    TAD["TerminalEngine Adapter"]
     XTERM["XtermEngine<br/>xterm.js + WebGL"]
-    WTERM["WtermEngine<br/>Experimental"]
-    WASIX["WASIX Worker<br/>Offline limited shell"]
-    DB[("IndexedDB")]
-    FS[("OPFS")]
-    UI --> TAD
+    WTERM["WtermEngine<br/>experimental"]
+    APP --> WORK
+    WORK --> TAD
     TAD --> XTERM
     TAD -. feature flag .-> WTERM
-    WASIX --> TAD
-    DB --> UI
-    FS --> UI
   end
 
-  subgraph Protocol["Session Protocol"]
-    CTRL["Control frames<br/>Open / Resize / Signal / Close"]
-    DATA["Raw data frames<br/>Terminal / File"]
-    FLOW["Flow control<br/>seq / ACK / window / heartbeat"]
-    CTRL --> FLOW
-    DATA --> FLOW
+  subgraph Workers["Browser Workers"]
+    SSH["OpenSSH WASM Worker<br/>ssh_client"]
+    WASSH["WASI Runtime<br/>wassh + wasi-js-bindings"]
+    SFTP["SFTP Runtime<br/>nasftp candidate"]
+    WASIX["Wasmer WASIX Worker<br/>offline shell"]
+    SSH <--> WASSH
+    SSH <--> SFTP
   end
 
-  subgraph Terminald["terminald — shared Go session core"]
-    API["HTTP/WSS API"]
-    SESS["Session Manager"]
-    CRED["Credential Broker"]
-    SSH["Go SSH Provider"]
-    NATIVE["Native OpenSSH Provider<br/>later"]
-    SFTP["SFTP Service"]
-    PTY["Local PTY Provider"]
-    REC["Optional Recorder"]
-    API --> SESS
-    SESS --> CRED
-    SESS --> SSH
-    SESS -.-> NATIVE
-    SESS --> SFTP
-    SESS --> PTY
-    SESS -.-> REC
+  subgraph SocketLayer["SocketTransport"]
+    DIRECT["DirectSocketsTransport<br/>IWA"]
+    CHROME["ChromeSocketsTransport<br/>compatible Chrome runtime"]
+    RELAY["RelayTransport<br/>optional open-web compatibility"]
+    UNSUP["UnsupportedTransport"]
   end
 
-  subgraph Deploy["Deployment modes"]
-    LOCAL["Local Agent<br/>127.0.0.1 + embedded PWA"]
-    CLOUD["Self-hosted/Managed Gateway<br/>long-running service"]
+  subgraph Storage["Browser Storage"]
+    DB[("IndexedDB<br/>profiles / workspace / metadata")]
+    OPFS[("OPFS<br/>encrypted blobs / temp files")]
+    CRYPTO["WebCrypto + Argon2id WASM<br/>Browser Vault"]
   end
 
-  subgraph Targets["Targets"]
-    HOST["SSH/SFTP Hosts"]
-    LPTY["ConPTY / WSL / Unix PTY"]
-    GUAC["Guacamole sidecar<br/>RDP/VNC later"]
-  end
-
-  UI --> CTRL
-  TAD --> DATA
-  FLOW --> API
-  LOCAL -. runs .-> API
-  CLOUD -. runs .-> API
-  SSH --> HOST
-  SFTP --> HOST
-  PTY --> LPTY
-  CLOUD -.-> GUAC
+  TAD <--> SSH
+  TAD <--> WASIX
+  WASSH --> SocketLayer
+  WORK <--> Storage
+  CRYPTO --> DB
+  CRYPTO --> OPFS
+  DIRECT --> HOST["Standard SSH/SFTP Server"]
+  CHROME --> HOST
+  RELAY -. WebSocket .-> HOST
 ```
 
-## 4. 为什么是这套技术
+## 4. 两个完全不同的 WASM Runtime
 
-### 4.1 React + Vite，而不是先上 Next.js
+### 4.1 OpenSSH WASM
 
-应用的核心是持续运行的客户端工作区：
+用途：真实远程 SSH/SFTP。
 
-- 终端、分屏、拖动和 SFTP 都是浏览器状态。
-- 本地 Agent 需要嵌入静态前端。
-- 离线启动比 SSR 更重要。
-- 登录、营销页面和云控制面以后可以独立部署。
+参考 Chromium libapps：
 
-因此第一版使用 React + TypeScript + Vite PWA。若以后官网或 SaaS 控制台需要 SSR，可建立独立应用，不污染终端工作区。
+```text
+OpenSSH source
+    ↓ WASI SDK
+ssh.wasm / sftp.wasm
+    ↓
+wassh WASI syscall handlers
+    ↓
+SocketTransport
+```
 
-### 4.2 Go `terminald`
+它负责：
 
-Go 适合：
+- SSH-2 transport。
+- KEX、cipher、MAC。
+- host key。
+- password/public key authentication。
+- channel、exec、shell。
+- port forwarding（底层 transport 支持时）。
+- OpenSSH 参数和兼容性。
 
-- 长期 WebSocket 和 SSH 连接。
-- 单文件跨平台发行。
-- 并发 session、SFTP 和端口转发。
-- 内嵌静态 PWA。
-- 本地 Agent 与云端 Gateway 共用核心。
+### 4.2 Wasmer WASIX
 
-`terminald` 不是通用 TCP proxy。它只暴露显式允许的 SSH/SFTP/PTY 操作，缩小权限面。
+用途：完全离线的受限本地 Shell。
 
-### 4.3 xterm.js 默认，wterm 实验
+它负责：
 
-`TerminalEngine` 是稳定边界：
+- 浏览器虚拟文件系统。
+- WASIX package。
+- Python/脚本/文本工具。
+- 与远程终端相同的 UI 和快捷键。
+
+它不负责：
+
+- 操作系统真实 PTY。
+- PowerShell、WSL 或本机 Bash。
+- 绕过浏览器 socket 权限。
+
+这两个 runtime 只共享 TerminalEngine、Vault 的部分文件和工作区 UI，
+不强行合并。
+
+## 5. SocketTransport
+
+### 5.1 接口
+
+```ts
+export type SocketCapabilities = {
+  directTcp: boolean;
+  tcpListen: boolean;
+  udp: boolean;
+  portForwarding: boolean;
+  privateNetwork: boolean;
+};
+
+export interface DuplexByteStream {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+  close(): Promise<void>;
+}
+
+export interface SocketTransport {
+  readonly name: string;
+  probe(): Promise<SocketCapabilities>;
+  connect(host: string, port: number): Promise<DuplexByteStream>;
+}
+```
+
+### 5.2 DirectSocketsTransport
+
+运行环境：Chromium IWA。
+
+```ts
+const socket = new TCPSocket(host, {
+  remotePort: port,
+  noDelay: true,
+  keepAliveDelay: 30_000,
+});
+
+const { readable, writable } = await socket.opened;
+```
+
+能力：
+
+- 直接连接标准 TCP/22。
+- 不需要 relay。
+- 可以支持本地/远程端口转发。
+- 可扩展 UDP 和 mosh 类能力。
+
+前提：
+
+- IWA manifest 显式声明 Direct Sockets permission policy。
+- IWA 满足跨源隔离。
+- 浏览器/管理员允许该高权限 API。
+- 私网访问按平台策略申请必要权限。
+
+### 5.3 ChromeSocketsTransport
+
+运行环境：提供 `chrome.sockets.tcp` 等能力的兼容 Chrome 包装环境。
+
+用途：
+
+- 参考/兼容 Chromium Secure Shell。
+- ChromeOS 或受支持的安装环境。
+
+不能假定普通 Manifest V3 扩展在所有桌面平台都能使用这些 API。必须以
+运行时探测和官方支持矩阵为准。
+
+### 5.4 RelayTransport
+
+运行环境：普通 HTTPS/PWA。
+
+```text
+OpenSSH WASM POSIX socket
+      ↓
+wassh RelayTransport
+      ↓ WebSocket
+user-configured relay
+      ↓ TCP
+SSH server
+```
+
+边界：
+
+- `oh_myssh` 不实现、不部署 relay。
+- 用户必须显式配置第三方或自己的 relay。
+- UI 必须标明流量经过哪个 relay。
+- 不能把 relay 模式宣传为端到端零服务。
+- Chromium wassh 文档指出 WebSocket relay 不支持完整端口转发。
+
+### 5.5 UnsupportedTransport
+
+当环境没有 Direct Sockets、Chrome Sockets，也没有用户配置 relay：
+
+- SSH 按钮显示“当前浏览器不能直接连接 TCP/22”。
+- 不伪装连接。
+- WASIX 离线 Shell 和工作区仍可使用。
+- 提供 IWA 安装说明。
+
+### 5.6 能力选择
+
+```ts
+async function selectTransport(): Promise<SocketTransport> {
+  if (await directSockets.probe()) return directSockets;
+  if (await chromeSockets.probe()) return chromeSockets;
+  if (relayConfig.isComplete()) return relayTransport;
+  return unsupportedTransport;
+}
+```
+
+不能只判断全局对象存在。`probe()` 必须验证 permission、实际 open 结果和
+目标网络范围。
+
+## 6. OpenSSH WASM Runtime
+
+### 6.1 模块
+
+```text
+packages/ssh-runtime/
+  src/
+    OpenSshRuntime.ts
+    OpenSshProcess.ts
+    StdioBridge.ts
+    FileSystemBridge.ts
+    SocketSyscallBridge.ts
+    HostKeyEvents.ts
+    AuthEvents.ts
+  worker/
+    ssh.worker.ts
+  wasm/
+    ssh.wasm
+    sftp.wasm
+```
+
+### 6.2 生命周期
+
+```mermaid
+stateDiagram-v2
+  [*] --> Loading
+  Loading --> Ready: WASM + VFS initialized
+  Loading --> Failed
+  Ready --> Connecting: run ssh
+  Connecting --> HostKeyPrompt
+  HostKeyPrompt --> Authenticating: accepted
+  HostKeyPrompt --> Closed: rejected
+  Authenticating --> Active
+  Authenticating --> Failed
+  Active --> Closing: exit / user close
+  Failed --> Closing
+  Closing --> Closed
+  Closed --> [*]
+```
+
+### 6.3 stdio bridge
+
+输入：
+
+```text
+xterm.onData()
+  -> UTF-8/binary input
+  -> worker ring buffer
+  -> OpenSSH stdin
+```
+
+输出：
+
+```text
+OpenSSH stdout/stderr
+  -> worker ring buffer
+  -> TerminalEngine.write(Uint8Array)
+```
+
+要求：
+
+- 不把 terminal bytes 放入 React state。
+- 使用 transferable `ArrayBuffer` 或 SharedArrayBuffer ring。
+- 输出队列有 high/low water mark。
+- UI 卡顿时暂停 worker 到 main 的 pump。
+- stderr 中的认证/host key 事件尽量通过结构化 hook，不依赖脆弱文本解析。
+
+### 6.4 虚拟文件系统
+
+OpenSSH WASM 需要虚拟 `$HOME`：
+
+```text
+/home/web/
+  .ssh/
+    config
+    known_hosts
+    identities/
+  downloads/
+  uploads/
+```
+
+持久化规则：
+
+- `.ssh/config` 可以从 profile 生成，不把 UI model 等同于文本文件。
+- `known_hosts` 加密保存。
+- 私钥解锁后只挂载到临时内存文件系统。
+- Worker 结束时销毁临时身份文件。
+- 导入/导出必须通过显式用户操作。
+
+## 7. TerminalEngine
 
 ```ts
 export interface TerminalEngine {
@@ -142,555 +357,666 @@ export interface TerminalEngine {
 
 实现：
 
-- `XtermEngine`：生产默认。
-- `WtermEngine`：feature flag。
-- `ReplayEngine`：测试与录屏回放。
+- `XtermEngine`：默认。
+- `WtermEngine`：实验。
+- `ReplayEngine`：回放/测试。
 
-React 只管理 terminal instance 的生命周期，不管理字节流。
+### xterm.js 配置
 
-## 5. 三种运行模式
+首版 addons：
 
-### 5.1 浏览器离线模式
+- WebGL。
+- fit。
+- search。
+- serialize。
+- Unicode。
+- clipboard。
 
-- Service Worker 已缓存应用后可离线启动。
-- Wasmer WASIX Worker 运行受限工具。
-- 不承诺连接任意 TCP/22。
-- 不访问本机真实 PTY 和系统私钥。
+后续：
 
-适合演示、教学和轻量离线命令。
+- image。
+- web links。
+- ligatures。
 
-### 5.2 本地 Agent 模式
+### wterm 晋级门槛
 
-第一优先级。
+- CJK/IME 无多余字符。
+- emoji/双宽字符网格正确。
+- tmux、vim、htop。
+- mouse tracking。
+- alternate screen。
+- resize/scrollback。
+- box drawing。
+- 长时间输出。
 
-```text
-terminald --mode=local
-  ├─ bind 127.0.0.1 only
-  ├─ serve embedded web/dist
-  ├─ same-origin WebSocket
-  ├─ OS Keychain / ssh-agent
-  ├─ ConPTY / WSL / Unix PTY
-  └─ SSH/SFTP to LAN or Internet
+任何一项失败都保持实验状态。
+
+## 8. SFTP Runtime
+
+### 8.1 API
+
+```ts
+export interface SftpClient {
+  list(path: string): Promise<RemoteEntry[]>;
+  stat(path: string): Promise<RemoteStat>;
+  realpath(path: string): Promise<string>;
+  mkdir(path: string): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
+  remove(path: string, recursive?: boolean): Promise<void>;
+  chmod(path: string, mode: number): Promise<void>;
+  download(
+    remotePath: string,
+    sink: WritableStream<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<void>;
+  upload(
+    source: ReadableStream<Uint8Array>,
+    remotePath: string,
+    signal?: AbortSignal,
+  ): Promise<void>;
+}
 ```
 
-为什么由 Agent 直接提供 PWA：
+### 8.2 实现顺序
 
-- 避免 HTTPS 页面连接 `ws://127.0.0.1` 的混合内容问题。
-- 避免浏览器 Private Network Access 行为差异。
-- 断网仍能冷启动。
-- 前端和 Agent 可以使用一次性配对、同源 cookie 和严格 Origin。
+1. 验证 Chromium `nasftp` 可独立复用程度。
+2. 将其 transport/VFS 与 UI 解耦。
+3. 保留 `SftpClient` 接口。
+4. 如果耦合不可接受，抽取独立 protocol core。
 
-### 5.3 云端 Gateway 模式
+禁止把 `sftp` CLI 的人类文本输出解析为正式 API。
 
-```text
-Static PWA / Login / Control API
-                  |
-                  v
-Long-running terminald Gateway
-                  |
-                  v
-SSH/SFTP targets
-```
+### 8.3 文件流
 
-- 静态 PWA 可以部署在 Vercel/CDN。
-- 长期 SSH 会话部署在 VM、长驻容器或 Kubernetes。
-- 用户应能选择自托管 Gateway。
-- 托管 Gateway 在 MVP 后再增加。
-
-## 6. `terminald` 模块边界
+下载：
 
 ```text
-cmd/terminald/
-  main.go
-
-internal/
-  app/             mode wiring, lifecycle, configuration
-  httpapi/         static files, REST control API, WebSocket upgrade
-  transport/       frame codec, multiplexing, ACK, heartbeat
-  session/         state machine, attach/detach, bounded replay
-  provider/
-    sshgo/         Go SSH provider
-    openssh/       native OpenSSH provider, later
-    localpty/      ConPTY / Unix PTY
-    guacamole/     RDP/VNC, later
-  sftp/            operations, chunked transfer, cancellation
-  credentials/     keychain, ssh-agent, credential references
-  knownhosts/      fingerprint verification and persistence
-  recording/       optional event recording
-  policy/          Origin, pairing, authorization, limits
-  observability/   safe metrics and redacted logs
+SFTP packets
+  -> worker
+  -> OPFS temporary file / File System Access sink
+  -> progress events
 ```
 
-### Session 状态机
-
-```mermaid
-stateDiagram-v2
-  [*] --> Creating
-  Creating --> Connecting
-  Connecting --> Active
-  Connecting --> Failed
-  Active --> Detached: browser disconnected
-  Detached --> Active: attach token valid
-  Detached --> Closing: grace timeout
-  Active --> Closing: user close / remote exit
-  Failed --> Closing
-  Closing --> Closed
-  Closed --> [*]
-```
-
-约束：
-
-- 每个状态转换必须幂等。
-- 任何失败必须产生稳定错误码。
-- Detached 期间只保存有界 replay buffer。
-- 真正长期 shell 保活通过 tmux/screen，而不是无限内存缓存。
-
-## 7. 二进制会话协议
-
-### 7.1 Frame
-
-固定 16 字节 header：
+上传：
 
 ```text
-version:u8 | kind:u8 | flags:u16 | channel:u32 | seq:u32 | length:u32
+File / OPFS
+  -> ReadableStream
+  -> SFTP worker
+  -> SSH socket
+```
+
+要求：
+
+- 大文件不完整装入内存。
+- 进度事件限频。
+- terminal 和 transfer 使用不同 SSH channel。
+- 支持 `AbortSignal`。
+- 断点续传第二阶段实现。
+
+## 9. Browser Vault
+
+纯前端不能读取系统 Keychain，因此 Vault 是核心安全组件。
+
+### 9.1 加密结构
+
+```text
+User password
+  -> Argon2id WASM
+  -> Key Encryption Key
+  -> unwrap Vault Master Key
+  -> AES-GCM per-record encryption
+```
+
+记录：
+
+```ts
+type EncryptedRecord = {
+  id: string;
+  version: 1;
+  algorithm: "AES-GCM";
+  nonce: Uint8Array;
+  ciphertext: Uint8Array;
+  aad: Uint8Array;
+};
 ```
 
 规则：
 
-- 网络字节序。
-- `version` 不匹配时明确拒绝。
-- `length` 在读取 payload 前先检查上限。
-- 每个 `channel` 对应 terminal、SFTP request 或 transfer。
-- 控制 payload 使用 Protobuf。
-- terminal/file payload 使用原始 bytes。
+- 每条记录使用独立随机 nonce。
+- AAD 绑定 record id、类型和 schema version。
+- Argon2 参数写入 Vault header，允许未来升级。
+- Vault Master Key 随机生成，不直接等于密码派生值。
+- 解锁 key 以 non-extractable `CryptoKey` 或最小生命周期字节存在。
+- 私钥默认不导出。
+- 自动锁定后销毁 Worker 和已解密 VFS。
 
-### 7.2 消息
+### 9.2 可选 WebAuthn PRF
 
-控制：
+后续可以使用 WebAuthn PRF 派生设备绑定的解锁材料。
 
-- `HELLO`
-- `PAIR`
-- `OPEN`
-- `READY`
-- `RESIZE`
-- `SIGNAL`
-- `ATTACH`
-- `DETACH`
-- `CLOSE`
-- `EXIT`
-- `ERROR`
+仍需保留：
 
-流控：
+- 恢复密码或导出恢复包。
+- 浏览器不支持时的主密码路径。
+- 用户明确知道删除浏览器 profile 会丢失本地数据。
 
-- `ACK`
-- `WINDOW_UPDATE`
-- `PING`
-- `PONG`
+### 9.3 不能承诺
 
-SFTP：
+- JS GC 下绝对可靠的内存清零。
+- 抵御已控制浏览器/恶意扩展。
+- 与硬件安全模块相同的密钥保护等级。
 
-- `LIST`
-- `STAT`
-- `REALPATH`
-- `MKDIR`
-- `RENAME`
-- `REMOVE`
-- `CHMOD`
-- `FILE_OPEN`
-- `FILE_DATA`
-- `FILE_ACK`
-- `FILE_CLOSE`
-- `CANCEL`
+必须通过签名 IWA、严格 CSP、无远程脚本和依赖审计降低风险。
 
-### 7.3 背压
+## 10. 数据模型
 
-- 单 terminal channel 初始窗口 256 KiB。
-- 最大未确认窗口 512 KiB。
-- 达到上限后 Gateway 暂停从 PTY/SSH 读取。
-- Browser 使用累计 ACK。
-- UI 卡住时不能让服务端缓冲无限增长。
-- terminal 小包默认不压缩。
-- 文件传输使用独立 channel；高吞吐时可使用独立 WebSocket。
+```text
+HostProfile
+  id, name, hostname, port, username
+  groupId, identityId, proxyJumpIds[]
+  sshOptions, tags[]
 
-### 7.4 重连
+Identity
+  id, name, kind
+  encryptedPrivateKeyRef
+  publicKey, fingerprint
 
-- 浏览器保存短期 opaque attach token。
-- token 绑定 session、用户、Origin 和过期时间。
-- 服务端保留有界序号窗口。
-- 超出 replay 窗口后进行终端状态快照恢复，或提示重新 attach tmux。
-- 不承诺像 Mosh 一样做预测回显；先保证正确性。
+KnownHost
+  host, port, algorithm, fingerprint
+  encryptedLine, acceptedAt
 
-## 8. 凭据和 host key
+Workspace
+  id, name, layoutTree, tabs[], updatedAt
 
-### 8.1 浏览器只保存引用
+Snippet
+  id, name, command, tags[], scope
+
+TransferTask
+  id, sessionId, direction
+  source, destination
+  bytesDone, bytesTotal, state
+
+AppCapabilitySnapshot
+  directSockets, chromeSockets, relay
+  webgl, opfs, sharedArrayBuffer, webauthnPrf
+```
+
+IndexedDB：
+
+- profile/workspace/snippet metadata。
+- 加密 Vault records。
+- capability snapshot。
+
+OPFS：
+
+- 加密私钥 blob。
+- 大文件临时区。
+- 录屏。
+- WASM runtime cache。
+- 可恢复上传片段。
+
+## 11. IWA 打包
+
+### 11.1 Manifest
+
+核心字段：
 
 ```json
 {
-  "credentialId": "cred_local_01H...",
-  "kind": "os-keychain",
-  "label": "Home Ed25519",
-  "publicFingerprint": "SHA256:..."
+  "name": "oh_myssh",
+  "version": "0.1.0",
+  "start_url": "/",
+  "display": "standalone",
+  "permissions_policy": {
+    "direct-sockets": ["self"],
+    "cross-origin-isolated": ["self"]
+  }
 }
 ```
 
-不得保存：
+实际字段以目标 Chrome/IWA 版本官方文档为准。
 
-- 私钥正文。
-- key passphrase。
-- SSH 密码。
-- 可重复使用的 Gateway 管理 token。
+### 11.2 构建
 
-### 8.2 Credential Broker
+```text
+pnpm build
+  -> dist/
+  -> unsigned Web Bundle
+  -> Ed25519/ECDSA signed .swbn
+  -> update manifest
+```
 
-本地模式：
+签名要求：
 
-- OS Keychain。
-- `ssh-agent` / Windows OpenSSH Agent。
-- 用户临时输入，仅保存在锁定内存的短生命周期对象中。
+- 生产签名 key 离线保存。
+- CI 只在受保护环境访问签名服务/硬件。
+- key rotation 流程在公开发布前演练。
+- `.swbn` 和 update manifest 都生成 checksum。
 
-云端模式：
+### 11.3 CSP
 
-- 优先短期 SSH certificate。
-- 其次用户自托管 Gateway。
-- 长期私钥托管必须是显式、单独加密、可审计的高级选项。
+原则：
 
-### 8.3 Host key
+- 所有 JS 都来自签名 bundle。
+- 禁止远程执行脚本。
+- 禁止 `eval`，仅允许 WASM 所需策略。
+- Trusted Types。
+- 第三方字体、主题和插件不加载远程代码。
+- 插件系统首版不实现。
 
-- 首次连接显示算法和指纹。
-- 用户明确接受后写入 Agent 的 `known_hosts`。
-- host key 变化时 fail closed。
-- UI 不能提供默认“忽略所有 host key”选项。
+## 12. 普通 PWA 构建
 
-## 9. 前端边界
+普通 PWA 与 IWA 共用 React/Terminal/OpenSSH 代码，但能力不同：
 
-### 9.1 状态分类
+```text
+apps/web/
+  build:pwa
+  build:iwa
+```
+
+PWA：
+
+- Service Worker 离线缓存。
+- WASIX Shell。
+- 工作区和 Vault。
+- 可选用户 relay。
+- 不宣称无 relay 直连 TCP/22。
+
+IWA：
+
+- Signed Web Bundle 天然离线。
+- Direct Sockets。
+- 更严格 CSP。
+- 真实直连 SSH。
+
+## 13. 前端状态边界
 
 React/Zustand：
 
 - 主机树。
 - tabs/splits。
 - layout。
-- 选中项。
-- 设置和主题。
-- transfer task 的可展示状态。
+- 选中状态。
+- 设置。
+- 低频 session 状态。
+- 限频后的传输进度。
 
-独立 session store：
+Worker/session runtime：
 
-- WebSocket。
-- channel。
-- seq/ACK。
-- terminal instance。
-- input/output queue。
+- OpenSSH process。
+- socket streams。
+- stdin/stdout。
+- SFTP packets。
+- Vault 解密上下文。
 
-IndexedDB：
+终端 bytes 绝不进入：
 
-- host profiles。
-- workspaces。
-- snippets。
-- themes。
-- credential references。
-- known host 的展示缓存。
+- React props。
+- Context。
+- Zustand/Redux action。
+- IndexedDB 普通日志。
 
-OPFS：
+## 14. 性能设计
 
-- 大型临时下载。
-- session recording。
-- 离线导出包。
-- 可恢复传输片段。
+### 14.1 Worker
 
-### 9.2 性能规则
+- OpenSSH WASM 独立 Worker。
+- WASIX 独立 Worker。
+- SFTP 可与 SSH 共 Worker，重操作可拆分。
+- Argon2id 独立 crypto Worker。
 
-- terminal bytes 不进入 React state、Context 或 Redux action。
-- `write()` 以小时间窗或 `requestAnimationFrame` 合并。
-- 隐藏 tab 暂停 renderer，但仍受流控约束。
-- SFTP 大目录使用虚拟列表。
-- split resize 合并后发送，不逐像素发远端 resize。
-- WASM、录屏编码、目录搜索放入 Worker。
-- Monaco、Guacamole、AI 等非核心包延迟加载。
+### 14.2 数据传递
 
-## 10. 数据模型
+优先顺序：
 
-MVP 最小实体：
+1. SharedArrayBuffer ring buffer。
+2. transferable ArrayBuffer。
+3. 普通 structured clone 只用于小型控制消息。
 
-```text
-Host
-  id, name, address, port, username, groupId
-  provider, proxyJumpIds[], credentialRef
+### 14.3 Terminal
 
-HostGroup
-  id, name, parentId, order
+- xterm WebGL。
+- 小时间窗批量 `write()`。
+- 隐藏 tab 暂停绘制。
+- 输出队列 256 KiB 初始高水位，最大 512 KiB。
+- 只保留有界 scrollback。
+- split resize 限频。
 
-CredentialRef
-  id, kind, label, publicFingerprint
+### 14.4 文件
 
-Workspace
-  id, name, layoutTree, tabs[], lastOpenedAt
+- Streams API。
+- OPFS。
+- 虚拟列表。
+- 不在 React 中保存目录全量派生对象。
+- 缩略图和搜索放 Worker。
 
-Snippet
-  id, name, command, tags[], scope
+## 15. 安全模型
 
-KnownHost
-  host, port, algorithm, fingerprint, acceptedAt
+### 15.1 主要攻击面
 
-TransferTask
-  id, sessionId, direction, localPath, remotePath
-  bytesDone, bytesTotal, state, errorCode
-```
+- 恶意 npm 依赖。
+- XSS。
+- 被替换的 WASM。
+- IWA 签名 key 泄露。
+- Vault 弱密码。
+- 已解锁页面被恶意扩展读取。
+- Direct Sockets 被滥用于扫描内网。
+- 用户忽略 host key 警告。
 
-不要把运行中 Session 整体持久化到 IndexedDB。持久化的是可重建描述和短期 attach 信息。
+### 15.2 控制
 
-## 11. 仓库结构
+- lockfile 与依赖哈希。
+- Dependabot/Renovate 只提 PR，不自动发布。
+- WASM build reproducibility。
+- 发布包 SBOM。
+- 严格 CSP/Trusted Types。
+- 不加载远程 JS。
+- 用户操作触发每次新主机连接。
+- 禁止后台端口扫描。
+- host key 变化 fail closed。
+- Vault 自动锁定。
+- 日志不包含密码、私钥和终端内容。
+- Clipboard 操作需要明确用户手势。
+
+### 15.3 Host key
+
+- 首次连接展示 hostname、IP、算法和指纹。
+- 用户接受后写入加密 `known_hosts`。
+- 指纹变化直接阻止连接。
+- 不提供默认关闭校验的全局开关。
+
+## 16. 仓库结构
 
 ```text
 oh_myssh/
   apps/
     web/
+      public/
       src/
         app/
         workspace/
-        terminal/
         hosts/
         sftp/
         settings/
-        stores/
         workers/
-  cmd/
-    terminald/
-  internal/
-    app/
-    httpapi/
-    transport/
-    session/
-    provider/
-    sftp/
-    credentials/
-    knownhosts/
-    recording/
-    policy/
-    observability/
   packages/
-    ui/
     terminal/
-    workspace/
+      xterm/
+      wterm/
+    ssh-runtime/
+      worker/
+      wasi/
+      wasm/
+    socket-transport/
+      direct-sockets/
+      chrome-sockets/
+      relay/
+    sftp/
+    vault/
     storage/
-    protocol-web/
-  proto/
-    terminal/v1/
+    workspace/
+    ui/
+  third_party/
+    libapps/
+    patches/
+    licenses/
+  tools/
+    build-openssh-wasm/
+    build-iwa/
+    verify-wasm/
+  iwa/
+    manifest.webmanifest
+    update-manifest/
   tests/
     vt-fixtures/
-    protocol/
-    e2e/
+    ssh-fixtures/
+    browser/
     security/
-  deploy/
-    docker/
-    systemd/
-    windows-service/
   docs/
 ```
 
 工具：
 
-- 前端：pnpm workspace。
-- Go：单 `go.mod`，避免过早拆多个 module。
-- Schema：Buf + Protobuf。
-- E2E：Playwright。
-- Go integration：真实 OpenSSH container。
-- CI：Windows、Linux、macOS 分平台测试。
+- pnpm workspace。
+- Vite。
+- TypeScript strict。
+- Vitest。
+- Playwright。
+- Chrome IWA dev mode。
+- ESLint/Prettier。
+- Buf/Protobuf 不需要作为首版核心，因为 SSH 自己处理 wire protocol。
 
-## 12. 路线图
+## 17. 路线图
 
-时间仅作为一个 1–2 人核心团队的规划参考，不是交付承诺。
+时间是假设 1–2 人核心团队的研究计划，不是承诺。
 
-### Phase 0：技术尖峰，1–2 周
-
-交付：
-
-- `TerminalEngine` 接口。
-- xterm/wterm 双实现最小 demo。
-- VT 回放与性能测试夹具。
-- Go PTY -> binary WebSocket -> browser vertical slice。
-- Windows ConPTY/WSL 探针。
-
-退出条件：
-
-- xterm 通过 CJK/IME/tmux/vim/mouse/resize。
-- wterm 风险有量化结果。
-- 持续输出时未确认缓冲有上限。
-- terminal bytes 没有进入 React state。
-
-### Phase 1：本地 SSH vertical slice，3–5 周
+### Phase 0：生死验证，1–2 周
 
 交付：
 
-- `terminald --mode=local`。
-- 嵌入式 PWA。
-- 主机创建、快捷连接。
-- SSH password/key/agent。
-- host key 确认。
-- 单终端、resize、复制粘贴、重连。
+- 最小 IWA。
+- Direct Sockets `TCPSocket` 连接测试 SSH server。
+- Chromium `ssh_client` WASM build。
+- `wassh` runtime 最小运行。
+- OpenSSH stdout/stdin 接到 xterm.js。
+- password 或测试 key 登录。
 
 退出条件：
 
-- Windows/macOS/Linux 至少各能启动 Agent。
-- 断开互联网后可冷启动并连接局域网 SSH。
-- host key 变更会阻止连接。
-- 私钥不出现在浏览器存储与 WebSocket 抓包中。
+- 浏览器进程内完成 SSH handshake。
+- 网络抓包显示浏览器直接连接目标 TCP/22。
+- 没有本地 Agent 和项目 Gateway。
+- 终端能运行 `uname -a`、`vim`、`top`。
 
-### Phase 2：工作区与 SFTP MVP，4–6 周
+若失败：
+
+- 不继续做完整 UI。
+- 明确是 IWA 分发、Direct Sockets、WASM build 还是 runtime bridge 阻塞。
+
+### Phase 1：SSH Core，3–5 周
+
+交付：
+
+- `SshRuntime`。
+- `SocketTransport`。
+- password、Ed25519、RSA。
+- host key。
+- `known_hosts`。
+- resize、signal、exit status。
+- connection profile。
+- 基础 Browser Vault。
+
+退出条件：
+
+- 三类认证稳定。
+- host key 变化 fail closed。
+- CJK/IME/tmux/vim 回归通过。
+- 刷新/关闭 session 行为明确。
+
+### Phase 2：Workspace + SFTP，4–6 周
 
 交付：
 
 - tabs/splits。
 - 主机树和分组。
-- workspace 恢复。
-- 命令片段。
+- workspace persistence。
+- snippets。
+- `nasftp` 评估/适配。
 - 双栏 SFTP。
-- 上传、下载、取消、冲突确认和进度。
-- 设置、主题、快捷键。
+- 流式上传/下载/取消。
 
 退出条件：
 
-- 20 个已打开会话时 UI 仍可操作。
-- 大目录列表虚拟化。
-- 文件传输不会阻塞按键回显。
-- 浏览器刷新后可重新 attach 或给出明确失效状态。
+- 文件传输不阻塞 terminal。
+- 大目录虚拟化。
+- 大文件不完整进入内存。
+- 多会话 UI 保持流畅。
 
-### Phase 3：MVP 加固与首个发布，3–5 周
+### Phase 3：Vault + IWA 发布，3–5 周
 
 交付：
 
-- 自动升级与数据迁移。
-- 安全检查和 threat model。
-- 协议 fuzz/上限测试。
-- Playwright E2E。
-- Windows 服务、systemd 和 macOS launchd 包装。
-- 文档、安装包和签名流程。
+- Argon2id + AES-GCM Vault。
+- 自动锁定。
+- 恢复包。
+- `.swbn` 打包和签名。
+- update manifest。
+- CSP/Trusted Types。
+- SBOM 和第三方许可证。
 
 退出条件：
 
-- 无 P0/P1 安全问题。
-- CJK/IME/宽字符回归通过。
-- 主要错误均有稳定错误码。
-- 离线、升级、降级和卸载行为明确。
+- 删除浏览器数据的后果有明确提示。
+- 私钥在静态存储中只有密文。
+- 发布包不包含远程执行代码。
+- 签名和更新流程可重复。
 
-### Phase 4：自托管 Gateway，4–8 周
+### Phase 4：公开 Beta，3–5 周
 
 交付：
 
-- `terminald --mode=server`。
-- Docker 部署。
-- 用户登录和 Gateway registration。
-- 加密配置同步。
-- session attach/detach。
-- tmux 集成。
-- SSH tunnel。
+- 安装文档。
+- 平台 capability 页面。
+- 错误诊断。
+- 性能基准。
+- Playwright/Chrome 回归。
+- 导入/导出。
+- 崩溃恢复。
 
-暂不自动加入：
+退出条件：
 
-- 强制录屏。
-- 复杂团队 RBAC。
-- SSO。
-- 托管私钥。
+- 没有 P0/P1 安全问题。
+- 所有平台限制如实展示。
+- 用户可以判断当前是 Direct、Chrome Sockets、Relay 或 Unsupported。
 
-### Phase 5：扩展
+### Phase 5：兼容与扩展
 
-- Guacamole RDP/VNC。
-- 团队、RBAC、SSO、审计。
-- 短期 SSH certificate。
-- 串口/Telnet provider。
-- 设备发现。
-- AI 助手，必须是显式 opt-in。
+- 普通 PWA RelayTransport。
+- WebAuthn PRF。
+- ProxyJump。
+- 本地/远程端口转发。
+- OpenSSH config import。
+- 录屏。
+- wterm renderer。
+- 更广泛 IWA 分发渠道。
 
-## 13. 第一批工程任务
+## 18. 第一批 Issues
 
-建议按以下顺序建立 issues：
+1. Scaffold React/Vite/pnpm workspace。
+2. 建立 IWA dev-mode 最小包。
+3. Direct Sockets TCP echo probe。
+4. TCP/22 SSH banner probe。
+5. 固定 Chromium libapps revision。
+6. 构建 `ssh_client` WASM。
+7. 集成 `wasi-js-bindings`/`wassh`。
+8. 定义 `SocketTransport`。
+9. 实现 DirectSocketsTransport。
+10. 定义 `TerminalEngine`。
+11. 集成 xterm.js/WebGL。
+12. OpenSSH stdio bridge。
+13. OpenSSH resize/signal bridge。
+14. password authentication。
+15. imported private key authentication。
+16. host key structured prompt。
+17. encrypted `known_hosts`。
+18. Vault format v1。
+19. Argon2id Worker。
+20. IndexedDB/OPFS repositories。
+21. HostProfile model。
+22. tabs/splits layout。
+23. `nasftp` compatibility spike。
+24. SFTP streams API。
+25. Signed Web Bundle build。
 
-1. Scaffold pnpm + Go monorepo。
-2. 定义 `TerminalEngine`。
-3. 建立 VT fixture corpus。
-4. xterm.js/WebGL demo。
-5. wterm compatibility spike。
-6. 定义 protocol v1 envelope。
-7. 实现 Go frame codec 与上限测试。
-8. 实现 browser frame codec。
-9. 实现 Unix PTY provider。
-10. 实现 Windows ConPTY provider。
-11. 实现 session state machine。
-12. 实现 ACK/window backpressure。
-13. 嵌入 Vite build 到 `terminald`。
-14. 实现 local pairing 和 Origin policy。
-15. 实现 Go SSH provider。
-16. 实现 known_hosts。
-17. 实现 OS Keychain credential reference。
-18. 实现 `ssh-agent` provider。
-19. 实现 Host/Workspace IndexedDB repositories。
-20. 实现 SFTP list/stat/read/write vertical slice。
+在第 3、4、6、7、12 项完成前，不开发 RDP/VNC、AI 或团队功能。
 
-不要在这些任务完成前开始 RDP/VNC、团队 SaaS 或 AI。
+## 19. 验收矩阵
 
-## 14. 质量门槛
+### SSH
 
-### 终端兼容
+- password。
+- Ed25519。
+- RSA。
+- encrypted private key。
+- host key 首次确认/变化。
+- IPv4/IPv6。
+- hostname/private LAN address。
+- ProxyJump 后续。
 
-- CJK 输入法组合输入。
-- emoji 和双宽字符。
-- combining characters。
-- tmux、vim、nano、less、top、htop。
+### Terminal
+
+- CJK/IME。
+- emoji/双宽字符。
+- combining marks。
+- tmux、screen。
+- vim、nano、less。
+- top、htop。
 - bracketed paste。
 - mouse tracking。
 - alternate screen。
-- resize 和 scrollback。
-- 复制、粘贴和搜索。
+- resize/scrollback。
+
+### Browser
+
+- IWA dev mode。
+- 受支持 ChromeOS/Chrome 环境。
+- 普通 Chrome PWA。
+- Edge/Firefox/Safari 显示正确的 unsupported/relay 状态。
 
 ### 性能
 
-- 本地处理增加的键盘回显延迟 p95 小于 8 ms，不包含目标网络 RTT。
-- 浏览器 terminal 未确认窗口不超过 512 KiB。
-- 持续输出时不存在数秒主线程冻结。
-- SFTP 文件传输不会饿死 terminal channel。
-- 隐藏 tab 不进行无意义的全速绘制。
+- WASM 冷启动时间。
+- 首次 SSH handshake 时间。
+- 5 MiB/s terminal output。
+- 20 tabs/多分屏。
+- 1 GiB SFTP 流式传输。
+- Vault 解锁耗时与 Argon2 参数。
 
 ### 安全
 
-- loopback only 默认。
-- 严格 Origin。
-- 一次性配对 token。
+- CSP。
+- Trusted Types。
+- dependency audit。
+- WASM checksum。
 - host key fail closed。
-- frame length/channel/rate 上限。
-- 日志和 crash report 脱敏。
-- recording 默认关闭。
-- 私钥不进入浏览器和普通日志。
+- Vault ciphertext inspection。
+- 无远程 JS。
+- Direct Sockets 只由用户操作触发。
 
-### 离线
-
-- 无互联网冷启动。
-- 本地字体、主题和 WASM 都已缓存或内嵌。
-- Service Worker 更新失败时可回退。
-- IndexedDB schema 可迁移。
-
-## 15. 主要风险
+## 20. 主要风险
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| wterm 兼容性不足 | 中文、tmux、vim 使用失败 | xterm 默认，适配层隔离 |
-| React 误入热路径 | 输出卡顿、内存膨胀 | 独立 session store 和性能测试 |
-| WebSocket 无背压 | OOM、会话失控 | 应用层 ACK/window |
-| Go SSH 不覆盖 OpenSSH 全功能 | FIDO/ProxyCommand 不兼容 | provider 抽象，后续 Native OpenSSH |
-| 浏览器连 localhost 限制 | Hosted PWA 无法稳定连 Agent | Agent 直接提供同源 PWA |
-| 私钥托管扩大风险 | 高价值攻击面 | 本地 keychain/agent 优先 |
-| 首版范围失控 | 无法形成可靠 MVP | 明确延后 RDP/VNC/PAM/AI |
-| 大型 fork | 升级与许可证失控 | 绿地核心 + 小型依赖 |
+| IWA 生产分发范围有限 | 普通用户无法安装直连版 | Phase 0 先确认目标渠道；保留 PWA/relay 兼容 |
+| Direct Sockets 权限变化 | 无法 TCP/22 | transport adapter；持续跟踪 Chromium |
+| `ssh_client` 与 nassh 耦合 | 集成成本高 | 先适配 wassh，不重写 OpenSSH |
+| OpenSSH WASM 体积/冷启动 | 首屏慢 | Worker 预热、缓存、分包、基准门槛 |
+| Browser Vault 弱于 OS Keychain | 私钥保护降低 | 签名 IWA、强 KDF、自动锁定、透明说明 |
+| SFTP UI 与 CLI 不匹配 | 文件功能不可靠 | 优先 nasftp/结构化 protocol |
+| wterm 兼容不足 | 中文/全屏应用错误 | xterm.js 默认 |
+| 普通 PWA 被误认为可直连 | 产品承诺错误 | capability matrix 和明确文案 |
+| 依赖供应链 | Vault/私钥泄露 | 固定依赖、SBOM、无远程代码、可复现 build |
 
-## 16. 仍需仓库所有者确认
+## 21. 项目当前技术决策
 
-开始编码前只剩三个产品级决策：
+已经确定：
 
-1. 正式产品名是否继续使用 `oh_myssh`。
-2. 许可证选择 Apache-2.0 还是 AGPL-3.0。
-3. 首个公开版本是否只承诺 Local Agent，还是同时承诺 Self-hosted Gateway。
+1. 严格纯前端。
+2. React + TypeScript + Vite。
+3. xterm.js/WebGL 为默认 renderer。
+4. Chromium OpenSSH WASM + wassh 为 SSH 核心参考。
+5. IWA Direct Sockets 为零 relay 直连主路径。
+6. Wasmer WASIX 只做离线 Shell。
+7. Browser Vault 代替 OS Keychain。
+8. 不实现项目后端和本地 Agent。
 
-技术上推荐：
+仍需验证，而不是口头假设：
 
-- 名称暂时保留。
-- 优先评估 Apache-2.0。
-- 第一个公开版本只承诺 Local Agent；Self-hosted Gateway 紧随其后。
+1. Direct Sockets 在目标用户平台的实际可分发性。
+2. `ssh_client`/`wassh` 从 nassh 中抽取的成本。
+3. `nasftp` 的 React 可适配性。
+4. OpenSSH WASM 总体积和冷启动。
+5. Vault 安全等级能否被目标用户接受。
+
+Phase 0 的意义就是先用真实代码回答这五个问题。
