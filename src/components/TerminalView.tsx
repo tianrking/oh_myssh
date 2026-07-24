@@ -125,10 +125,10 @@ export const TerminalView: React.FC<Props> = ({
       }
       engine1.terminal.writeln('');
       engine1.terminal.writeln(
-        ' \x1b[36m说明\x1b[0m  纯 Vercel 静态站 = 只有前端。真实 SSH 需要「有人」能拨 TCP。'
+        ' \x1b[36m用法\x1b[0m  本地: \x1b[1mnpm run dev:with-gateway\x1b[0m 后快速连接即可（经网关，非浏览器直连）。'
       );
       engine1.terminal.writeln(
-        '       可先用侧边栏 \x1b[1m离线开发 Shell\x1b[0m 体验终端 UI。'
+        '       或自建免费网关，构建时设 VITE_SSH_GATEWAY=wss://你的网关/ssh'
       );
       engine1.terminal.writeln('');
     };

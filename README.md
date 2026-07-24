@@ -49,20 +49,60 @@ npm run build
 
 ---
 
-## 本地开发
+## 真实 SSH：用网关连接（现在就可以）
+
+**这不是 Chrome 直连 VPS**，而是经典 WebSSH：
+
+```text
+浏览器  →  网关(免费可自建)  →  你的 VPS:22
+```
+
+### 本地马上连
 
 ```bash
 npm install
-npm run dev      # 仅前端 http://localhost:3000
-npm test
-npm run build
+npm run dev:with-gateway    # 前端 + 本机网关
+# 打开 http://localhost:3000
+# 快速连接 root@你的VPS:22 + 密码 → 状态栏 WebSSH Gateway
 ```
 
-可选（**不是** Vercel 纯静态路径；只有你需要真实 SSH 实验时）：
+### 有没有「免费网关」？
+
+| 类型 | 建议 |
+|------|------|
+| **公网别人家的免费公共网关** | **不建议**。密码/会话过别人服务器，极少且不安全 |
+| **自己免费/白嫖机器上跑本仓库网关** | **推荐**。Oracle 免费 ARM、校园机、已有 VPS、家里 NAS 等 |
+| **一体部署** | `npm run build && npm start` 或 `docker compose up`，一个地址搞定 |
+
+你已经有一台 VPS 时，最省事：在 **同一台或另一台便宜机器** 上跑网关，前端指过去即可。
 
 ```bash
-npm run dev:with-gateway   # 前端 + 可选本机网关
-npm start                  # 一体服务（需先 build）
+# 在「网关机器」上
+npm install && npm run build && npm start
+# 用户打开 http://网关机器IP:8080 即可连任意目标 VPS
+```
+
+只部署前端到 Vercel 时，构建加环境变量：
+
+```bash
+VITE_SSH_GATEWAY=wss://你的网关域名/ssh npm run build
+```
+
+### 网关 = 直连吗？
+
+**不是直连。**  
+直连 = 浏览器 TCP 直接到 VPS（普通 Chrome 做不到）。  
+网关 = 浏览器只连你的网关，**由网关**去连 VPS（和网上 WebSSH 一样，可用、好用）。
+
+---
+
+## 本地开发（仅 UI）
+
+```bash
+npm install
+npm run dev      # 仅前端，没有网关则不能真 SSH
+npm test
+npm run build
 ```
 
 ---

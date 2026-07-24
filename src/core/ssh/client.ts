@@ -74,64 +74,87 @@ function envGateway(): string {
 }
 
 const PURE_STATIC_SSH_ERROR = [
-  '纯静态前端（例如只托管在 Vercel）无法对任意 IP 建立真实 SSH。',
+  '当前没有可用的 WebSSH 网关，无法连接真实 VPS。',
   '',
-  '原因：浏览器禁止普通网页直接打开 TCP/22。',
-  '网上那些「打开网页就能 SSH」的站点，背后都有服务器帮你拨号。',
+  'Chrome 普通网页不能直连 TCP/22，必须经网关：',
+  '  浏览器  →  网关  →  你的 VPS:22',
   '',
-  '在「只编译前端、托管 Vercel、我们也不跑服务」的前提下，',
-  '本应用可以提供：终端 UI、主机库、离线 Shell、命令片段等。',
-  '不能提供：不经过任何服务器就连你的 VPS。',
+  '本地立刻能连：',
+  '  npm run dev:with-gateway',
+  '  然后快速连接 root@host:22 + 密码',
   '',
-  '可选（都需要「有人」跑服务，不是纯静态）：',
-  '· 自行部署可选网关并设置 VITE_SSH_GATEWAY=wss://...',
-  '· 使用支持 Direct Sockets 的特殊浏览器环境 (IWA)',
+  '免费自建网关（推荐）：',
+  '  在任意免费/便宜的 VPS 上: npm run build && npm start',
+  '  或只跑: npm run gateway   （端口 3922）',
+  '  前端构建时设置: VITE_SSH_GATEWAY=wss://你的域名/ssh',
+  '',
+  '注意：公网「免费公共网关」极少且极危险（密码会过别人机器），请自建。',
 ].join('\n');
 
 /**
  * Connect SSH shell.
- * Order: explicit gateway env → DirectSockets → optional relay → clear pure-static error.
+ * Order:
+ *  1) WebSSH gateway (same-origin / env / explicit) — recommended product path
+ *  2) DirectSockets (rare)
+ *  3) Advanced raw bridge
+ *  4) Clear error if nothing available
+ *
+ * Gateway path is NOT "direct TCP from Chrome"; it is classic WebSSH
+ * (browser → gateway → VPS). Free if you self-host the gateway.
  */
 export async function connectSshShell(opts: SshConnectOptions): Promise<SshShellSession> {
   const { host, port, auth } = opts;
-  const gateway =
-    (opts.gatewayUrl && opts.gatewayUrl.trim()) ||
-    envGateway() ||
-    '';
 
-  // 1) Optional external WebSSH gateway — only if YOU configured one (not pure Vercel)
-  if (gateway) {
-    status(opts, `Gateway · ${auth.username}@${host}:${port}`);
-    const gw = await connectViaWebSshGateway({
-      host,
-      port,
-      username: auth.username,
-      password: auth.password,
-      privateKey: auth.privateKeyPem,
-      cols: opts.cols,
-      rows: opts.rows,
-      gatewayUrl: gateway,
-      onStatus: opts.onStatus,
-    });
-    return {
-      mode: 'webssh-gateway',
-      stream: gw.stream,
-      write: gw.write,
-      resize: gw.resize,
-      close: gw.close,
-      openSftp: async () => {
-        throw new Error('SFTP over external gateway is not enabled in pure-static mode');
-      },
-    };
+  // Candidate gateway URLs (first that works wins)
+  const candidates: string[] = [];
+  if (opts.gatewayUrl?.trim()) candidates.push(opts.gatewayUrl.trim());
+  const fromEnv = envGateway();
+  if (fromEnv) candidates.push(fromEnv);
+  // Same-origin paths: prod all-in-one + vite dev proxy
+  if (typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const base = `${proto}//${window.location.host}`;
+    candidates.push(`${base}/ssh-ws`, `${base}/ssh`);
   }
 
-  // 2) True browser Direct Sockets (rare; not normal Vercel Chrome)
+  let lastGwError: Error | null = null;
+  for (const gateway of candidates) {
+    try {
+      status(opts, `Gateway · ${auth.username}@${host}:${port}`);
+      const gw = await connectViaWebSshGateway({
+        host,
+        port,
+        username: auth.username,
+        password: auth.password,
+        privateKey: auth.privateKeyPem,
+        cols: opts.cols,
+        rows: opts.rows,
+        gatewayUrl: gateway,
+        onStatus: opts.onStatus,
+      });
+      return {
+        mode: 'webssh-gateway',
+        stream: gw.stream,
+        write: gw.write,
+        resize: gw.resize,
+        close: gw.close,
+        openSftp: async () => {
+          throw new Error('SFTP over gateway: open a dedicated SFTP session later');
+        },
+      };
+    } catch (e) {
+      lastGwError = e instanceof Error ? e : new Error(String(e));
+      // try next candidate
+    }
+  }
+
+  // DirectSockets (not normal Chrome webpage)
   if (hasDirectSockets()) {
     status(opts, `Direct TCP · ${auth.username}@${host}:${port}`);
     return connectBrowserSsh(opts, await openDirectStream(host, port), 'direct');
   }
 
-  // 3) Optional raw TCP bridge URL from advanced settings
+  // Advanced raw bridge from settings
   if (opts.relayUrl && opts.relayUrl.trim()) {
     status(opts, `Bridge · ${host}:${port}`);
     const url = buildRelayUrl(opts.relayUrl.trim(), host, port);
@@ -139,8 +162,8 @@ export async function connectSshShell(opts: SshConnectOptions): Promise<SshShell
     return connectBrowserSsh(opts, stream, 'optional-bridge');
   }
 
-  // 4) Pure static: impossible
-  throw new Error(PURE_STATIC_SSH_ERROR);
+  const hint = lastGwError ? `\n\n(网关尝试失败: ${lastGwError.message})` : '';
+  throw new Error(PURE_STATIC_SSH_ERROR + hint);
 }
 
 async function openDirectStream(host: string, port: number): Promise<Stream> {
