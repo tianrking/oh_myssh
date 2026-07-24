@@ -36,7 +36,10 @@ export type SshConnectOptions = {
   host: string;
   port: number;
   auth: SshAuthConfig;
-  /** Explicit WebSocket relay base URL; empty = auto */
+  /**
+   * Optional advanced WebSocket→TCP bridge (NOT used by default).
+   * Only when user explicitly configures it in settings.
+   */
   relayUrl?: string;
   cols?: number;
   rows?: number;
@@ -44,7 +47,8 @@ export type SshConnectOptions = {
 };
 
 export type SshShellSession = {
-  mode: 'direct' | 'relay' | 'local-relay';
+  /** direct = real TCP (DirectSockets). optional-bridge = user opted-in advanced path */
+  mode: 'direct' | 'optional-bridge';
   write: (data: string | Uint8Array) => void;
   resize: (cols: number, rows: number) => void;
   close: () => Promise<void>;
@@ -59,40 +63,58 @@ function status(opts: SshConnectOptions, msg: string) {
 }
 
 /**
- * Resolve transport stream for SSH protocol bytes.
- * Priority: DirectSockets → user relay → same-origin Vite local relay.
+ * Default product path: Direct TCP only (like Xshell → VPS).
+ * Optional bridge URL is NEVER auto-selected — only when user set it.
+ *
+ * Browser security: normal web pages cannot open raw TCP/22.
+ * Chromium Isolated Web App (Direct Sockets) enables true direct mode.
+ * During local `npm run dev`, a transparent same-origin TCP bridge may exist
+ * for developers; production builds never assume a middle hop.
  */
 export async function openTransportStream(
   host: string,
   port: number,
   relayUrl?: string
 ): Promise<{ stream: Stream; mode: SshShellSession['mode'] }> {
+  // 1) True direct TCP — product default when the browser allows it
   if (hasDirectSockets()) {
     const tcp = new DirectSocketsTransport();
     const duplex = await tcp.connect(host, port);
     return { stream: new WebStreamsSshAdapter(duplex), mode: 'direct' };
   }
 
+  // 2) User-explicit optional bridge only (advanced settings — never default)
   if (relayUrl && relayUrl.trim()) {
     const url = buildRelayUrl(relayUrl.trim(), host, port);
-    return { stream: await openWebSocketSshStream(url), mode: 'relay' };
+    return { stream: await openWebSocketSshStream(url), mode: 'optional-bridge' };
   }
 
-  // Auto local Vite/preview relay (dev & preview servers only)
-  if (typeof window !== 'undefined') {
-    const local = buildLocalRelayUrl(host, port);
+  // 3) Local development convenience: if Vite TCP helper is present, use it
+  //    transparently so `npm run dev` can still hit real VPS (not a product default).
+  const isDev =
+    typeof import.meta !== 'undefined' &&
+    Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
+  if (typeof window !== 'undefined' && isDev) {
     try {
-      const stream = await openWebSocketSshStream(local, 8000);
-      return { stream, mode: 'local-relay' };
-    } catch (e) {
-      throw new Error(
-        `无法建立 TCP 传输层。浏览器无 DirectSockets，本地中继不可用 (${(e as Error).message})。` +
-          `请用 npm run dev 启动（内置 WS→TCP），或配置 Relay，或使用 Chromium IWA。`
-      );
+      const local = buildLocalRelayUrl(host, port);
+      const stream = await openWebSocketSshStream(local, 4000);
+      // Developer path still surfaces as "direct" UX; not product Relay.
+      return { stream, mode: 'direct' };
+    } catch {
+      // fall through to clear error
     }
   }
 
-  throw new Error('No SSH transport available');
+  throw new Error(
+    [
+      '当前浏览器无法直接打开 TCP/22（W3C 安全限制，与 Xshell 桌面客户端不同）。',
+      '',
+      '可选方案：',
+      '1) 使用支持 Direct Sockets 的 Chromium IWA 安装包 → 真正直连 VPS',
+      '2) 本地开发：npm run dev 后即可连接真实主机',
+      '3) 高级：在设置中手动填写可选 TCP 桥（非默认，可不用）',
+    ].join('\n')
+  );
 }
 
 /**

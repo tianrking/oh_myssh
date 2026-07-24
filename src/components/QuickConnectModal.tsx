@@ -68,7 +68,7 @@ export const QuickConnectModal: React.FC<Props> = ({ isOpen, onClose, onConnect 
             </div>
             <div>
               <h3 className="font-semibold text-slate-100 text-lg">快速连接主机</h3>
-              <p className="text-xs text-slate-400">真实 SSH2：填写密码后连接任意标准 OpenSSH 服务器</p>
+              <p className="text-xs text-slate-400">像 Xshell 一样：user@host:port + 密码，直连远程 VPS</p>
             </div>
           </div>
           <button

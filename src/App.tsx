@@ -62,25 +62,8 @@ export function App() {
       setHosts(allHosts);
       setSnippets(allSnippets);
 
-      // Prefer offline demo host so first open always works
-      const defaultHost =
-        allHosts.find((h) => h.tags?.includes('Offline') || h.host.includes('offline')) ||
-        allHosts[0];
-
-      if (defaultHost) {
-        const newTab: TabItem = {
-          id: 'tab-' + Date.now(),
-          title: defaultHost.name,
-          type: 'ssh',
-          host: defaultHost.host,
-          port: defaultHost.port,
-          username: defaultHost.username,
-          splitMode: 'none',
-        };
-        setTabs([newTab]);
-        setActiveTabId(newTab.id);
-        sessionRegistry.setActive(newTab.id);
-      }
+      // Xshell-like: start on welcome screen — user opens Quick Connect to a real VPS.
+      // Do not auto-open offline/demo sessions as the default experience.
     }
     void init();
   }, []);
@@ -110,20 +93,22 @@ export function App() {
         }
       }
 
+      const isOffline =
+        host.host === 'offline.local' ||
+        host.host?.includes('offline') ||
+        (host.tags || []).includes('Offline');
+
       const newTab: TabItem = {
         id: 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
         title: host.name || `${host.username}@${host.host}`,
         type: 'ssh',
-        host: host.host || 'offline.local',
+        host: host.host || '127.0.0.1',
         port: host.port || 22,
         username: host.username || 'root',
-        // Credentials stay in-memory for this session tab only
+        // Credentials stay in-memory for this session tab only (like Xshell session)
         password: host.password,
         privateKey: host.privateKey,
-        forceOffline:
-          host.host === 'offline.local' ||
-          (host.tags || []).includes('Offline') ||
-          host.host?.includes('offline'),
+        forceOffline: isOffline,
         splitMode: 'none',
       };
       setTabs((prev) => [...prev, newTab]);

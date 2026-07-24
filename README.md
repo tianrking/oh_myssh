@@ -1,70 +1,51 @@
 # Oh My SSH
 
-> 纯前端 · 真实 SSH2 · Xshell 级工作区 · 离线也能用
+> 打开浏览器，像 Xshell 一样连远程 VPS。默认直连，不强制中继。
 
-**Oh My SSH** 是本地优先的纯前端 SSH/SFTP 桌面工作区。浏览器内运行完整 **SSH2 协议栈**（`@microsoft/dev-tunnels-ssh` + WebCrypto），配合 xterm.js WebGL 终端、多标签分屏、双栏 SFTP 与加密 Vault。
-
-已在真实主机上验证：**密码认证 Shell + 交互命令** 通过 E2E。
-
----
-
-## 功能一览
-
-| 能力 | 状态 |
-|------|------|
-| 真实 SSH2 握手 / 密码认证 / PTY Shell | ✅ |
-| SFTP v3（列表 / 上传 / 下载） | ✅ |
-| 多标签保活 + 左右/上下分屏 | ✅ |
-| 广播输入 / 命令片段 / 会话日志导出 | ✅ |
-| Offline Interactive Shell（无网络） | ✅ |
-| Direct Sockets（Chromium IWA） | ✅ |
-| 开发态 WS→TCP 中继（`npm run dev`） | ✅ |
-| 自定义 WebSocket Relay | ✅ |
-| 主题 / WebGL·Canvas 切换 / 快捷键 | ✅ |
+纯前端 SSH/SFTP 工作区：多标签、分屏、SFTP、命令面板、加密主机库。  
+SSH2 协议在浏览器内完成（WebCrypto + `@microsoft/dev-tunnels-ssh`）。
 
 ---
 
-## 快速开始
+## 默认怎么连（Xshell 体验）
+
+1. `npm run dev` 或打开已部署站点  
+2. **快速连接** → `root@你的VPS:22` + 密码  
+3. 回车连接，进入真实远程 Shell  
+
+**不会**默认走中继。中继仅在「高级设置」里可选，留空即不使用。
 
 ```bash
 npm install
-npm test              # 单元测试
-npm run test:ssh      # 真实 SSH E2E（需环境变量密码）
-npm run dev           # http://localhost:3000  内置 WS→TCP 中继
-npm run build
-npm run preview       # 预览同样带中继
+npm run dev          # 本地开发：可直接连真实 VPS
+npm run build        # 静态构建（可部署 Vercel 等）
+npm test
 ```
 
-### 连接真实服务器（推荐流程）
+---
 
-1. `npm run dev`
-2. 打开 **快速连接**
-3. 输入 `user@host:port` 与密码
-4. 状态栏显示 **Local WS→TCP + SSH2** 即真实会话
+## 连接路径（默认 = 直连）
 
-传输路径：
+| 优先级 | 条件 | 行为 |
+|--------|------|------|
+| **1. 直连（默认）** | Chromium Direct Sockets（IWA） | 浏览器 → TCP/22 → 你的 VPS |
+| **1b. 本地开发** | `npm run dev` | 开发服务器透明 TCP，仍按「直连」使用 |
+| **2. 可选桥** | 用户在高级设置**主动填写** | 才使用 WebSocket→TCP（非默认） |
+| 离线演示 | 仅 `offline.local` 等演示主机 | Offline Shell |
 
-```text
-浏览器 SSH2 客户端  →  WebSocket  →  Vite 本地中继  →  TCP/22  →  OpenSSH
-```
+> 普通网页受浏览器安全模型限制，**不能**像桌面 Xshell 那样无条件裸开 TCP。  
+> 本地用 `npm run dev` 即可连真实主机；生产环境真·纯直连请用支持 Direct Sockets 的 IWA 包。  
+> **Vercel 静态托管**可部署 UI；真直连依赖浏览器 Direct Sockets，或你自行启用高级可选桥。
 
-生产静态托管时：
+---
 
-- 使用 **Chromium IWA Direct Sockets**，或
-- 配置自建 **WebSocket → TCP Relay**（顶部 Network 按钮）
+## 功能
 
-> 普通网页无法直接打开 TCP 端口，这是浏览器安全模型，不是本项目缺陷。
-
-### 真实 SSH E2E 测试
-
-```bash
-export OMS_SSH_HOST=your.server
-export OMS_SSH_USER=root
-export OMS_SSH_PASSWORD='your-password'
-npm run test:ssh
-```
-
-**切勿把密码提交到 Git。** 密码仅存于当前标签页内存，不写入 IndexedDB。
+- 真实 SSH2：密码认证、PTY Shell、窗口 resize  
+- SFTP v3：列表 / 上传 / 下载  
+- 多标签保活、分屏、广播、命令片段  
+- 主机树、主题、快捷键  
+- 离线演示 Shell（可选，不默认）
 
 ---
 
@@ -76,64 +57,24 @@ npm run test:ssh
 | `⌘/Ctrl+T` | 新建连接 |
 | `⌘/Ctrl+W` | 关闭标签 |
 | `Ctrl+Tab` | 切换标签 |
-| `⌘/Ctrl+Shift+B` | 广播栏 |
 
 ---
 
-## 架构
+## 安全
 
-```text
-React Workspace
-  ├── TerminalEngine (xterm.js + WebGL + StreamFrameBatcher)
-  ├── SessionRegistry (broadcast / snippets / logs)
-  └── SSH2 Client (@microsoft/dev-tunnels-ssh + WebCrypto)
-          │
-          ├── DirectSocketsTransport     (IWA)
-          ├── WebSocketRelayTransport    (自建 / 自定义)
-          └── Vite WS→TCP Relay          (dev/preview only)
-          │
-          ├── Shell channel + PTY
-          └── SFTP subsystem (v3)
-```
-
-离线主机（`offline.local`）走 **Offline Interactive Shell**，无需网络。
+- 密码只在当前标签内存，默认不写 IndexedDB  
+- 切勿把服务器密码提交到 Git  
+- 高级 TCP 桥默认关闭；启用前请自担信任风险  
 
 ---
 
-## 项目结构
+## 部署（Vercel 等）
 
-```text
-src/
-├── components/          # 工作区 UI
-├── core/
-│   ├── ssh/             # 真实 SSH2 客户端 + SFTP + 传输适配
-│   ├── shell/           # 离线 Shell
-│   ├── session/         # 会话注册表
-│   ├── socket/          # Transport 抽象
-│   ├── terminal/        # xterm 引擎
-│   ├── vault/           # WebCrypto + Dexie
-│   └── sftp/            # OPFS 本地侧
-scripts/
-├── vite-ws-tcp-relay.ts # 开发中继插件
-└── e2e-ssh-check.mjs    # 真实主机 E2E
-```
+- Framework: **Vite**  
+- Build: `npm run build`  
+- Output: `dist`  
 
----
-
-## 安全说明
-
-- 密码/私钥默认 **仅内存**，连接配置入库时不落盘明文凭据。
-- 服务端 host key 当前会话接受（后续可做 known_hosts UI）。
-- 开发中继仅绑定本机 Vite 进程，勿在公网暴露无鉴权中继。
-
----
-
-## 文档
-
-- [产品蓝图](docs/PRODUCT_BLUEPRINT.md)
-- [架构与路线图](docs/ARCHITECTURE_AND_ROADMAP.md)
-- [性能工程](docs/PERFORMANCE_ENGINEERING.md)
-- [同步与安全](docs/SYNC_AND_SECURITY.md)
+静态站点可部署；是否能直连 TCP 取决于浏览器能力（Direct Sockets），与是否「默认中继」无关——产品默认就是直连模式。
 
 ---
 

@@ -46,13 +46,15 @@ export const RelaySettingsModal: React.FC<Props> = ({
 
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs">
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-amber-300 space-y-1">
-            <div className="flex items-center gap-1.5 font-semibold">
-              <ShieldAlert className="h-4 w-4" />
-              <span>{t('relayWarningTitle')}</span>
+          <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-3 text-slate-300 space-y-1">
+            <div className="flex items-center gap-1.5 font-semibold text-slate-200">
+              <ShieldAlert className="h-4 w-4 text-slate-400" />
+              <span>高级可选项 · 默认不需要</span>
             </div>
-            <p className="text-[11px] text-amber-200/80 leading-relaxed">
-              {t('relayWarningBody')}
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              产品默认像 Xshell 一样直连 VPS，不会自动使用任何中继。
+              仅当环境不支持 Direct Sockets、且你明确需要兼容桥接时，才填写下方地址。
+              留空 = 不使用。
             </p>
           </div>
 

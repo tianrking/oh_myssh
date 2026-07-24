@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TerminalEngine } from '../core/terminal/engine';
-import { MockSocketTransport, type ConnectionMode } from '../core/socket/transport';
+import { MockSocketTransport } from '../core/socket/transport';
 import { connectSshShell, type SshShellSession } from '../core/ssh/client';
 import { sessionRegistry, type SessionMode } from '../core/session/registry';
-import { Palette, RefreshCw, Cpu, ShieldCheck, WifiOff, Link2, Zap } from 'lucide-react';
+import { Palette, RefreshCw, Cpu, ShieldCheck, WifiOff, Zap } from 'lucide-react';
 import type { TabItem } from './WorkspaceTabs';
 
 interface Props {
   tab: TabItem;
+  /** Optional advanced bridge only — never required */
   relayUrl?: string;
   theme?: string;
   isActive?: boolean;
@@ -16,16 +17,22 @@ interface Props {
 function modeLabel(mode: string): string {
   switch (mode) {
     case 'direct':
-      return 'Direct Sockets + SSH2';
-    case 'relay':
-      return 'Relay + SSH2';
-    case 'local-relay':
-      return 'Local WS→TCP + SSH2';
+      return 'SSH2 Direct';
+    case 'optional-bridge':
+      return 'SSH2 (Advanced Bridge)';
     case 'offline':
-      return 'Offline Interactive Shell';
+      return 'Offline Shell';
     default:
       return mode;
   }
+}
+
+function isOfflineHost(tab: TabItem): boolean {
+  return (
+    !!tab.forceOffline ||
+    tab.host === 'offline.local' ||
+    tab.host.includes('offline')
+  );
 }
 
 export const TerminalView: React.FC<Props> = ({
@@ -42,7 +49,7 @@ export const TerminalView: React.FC<Props> = ({
 
   const [currentTheme, setCurrentTheme] = useState(theme);
   const [transportName, setTransportName] = useState('Connecting…');
-  const [connectionMode, setConnectionMode] = useState<string>('offline');
+  const [connectionMode, setConnectionMode] = useState<string>('connecting');
   const [connectedTime, setConnectedTime] = useState('');
   const [useWebGL, setUseWebGL] = useState(true);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
@@ -88,10 +95,8 @@ export const TerminalView: React.FC<Props> = ({
       if (isActive) sessionRegistry.setActive(tab.id);
     };
 
-    const connectOffline = async (reason?: string) => {
-      if (reason) {
-        engine1.terminal.writeln(`\x1b[33m${reason}\x1b[0m\r\n`);
-      }
+    const connectOffline = async (banner?: string) => {
+      if (banner) engine1.terminal.writeln(banner);
       const offline = new MockSocketTransport();
       const stream = await offline.connect(tab.host, tab.port, tab.username);
       if (cancelled) return;
@@ -102,26 +107,43 @@ export const TerminalView: React.FC<Props> = ({
       register('offline');
     };
 
+    const showConnectError = (message: string) => {
+      setStatus('error');
+      setTransportName('SSH Failed');
+      setConnectionMode('error');
+      engine1.terminal.writeln('');
+      engine1.terminal.writeln('\x1b[1;31m╔══════════════════════════════════════════════════════╗\x1b[0m');
+      engine1.terminal.writeln('\x1b[1;31m║  SSH 连接失败                                        ║\x1b[0m');
+      engine1.terminal.writeln('\x1b[1;31m╚══════════════════════════════════════════════════════╝\x1b[0m');
+      engine1.terminal.writeln('');
+      engine1.terminal.writeln(` \x1b[33m目标\x1b[0m  ${tab.username}@${tab.host}:${tab.port}`);
+      engine1.terminal.writeln('');
+      for (const line of message.split('\n')) {
+        engine1.terminal.writeln(` ${line}`);
+      }
+      engine1.terminal.writeln('');
+      engine1.terminal.writeln(' \x1b[36m提示\x1b[0m  像 Xshell 一样使用：快速连接里填主机 + 密码。');
+      engine1.terminal.writeln('       本地请用 \x1b[1mnpm run dev\x1b[0m；生产真·直连需 Chromium IWA Direct Sockets。');
+      engine1.terminal.writeln('');
+    };
+
     const connect = async () => {
-      // Explicit offline demo hosts / flag
-      if (
-        tab.forceOffline ||
-        tab.host === 'offline.local' ||
-        tab.host.includes('offline')
-      ) {
+      // Demo offline host only
+      if (isOfflineHost(tab)) {
         await connectOffline();
         return;
       }
 
-      // No credentials → offline with hint (still usable)
+      // Xshell-style: require credentials for real VPS
       if (!tab.password && !tab.privateKey) {
-        await connectOffline(
-          '未提供密码/私钥 — 进入 Offline Shell。在快速连接中填写密码以使用真实 SSH。'
+        showConnectError(
+          '未填写密码或私钥。\n请用「快速连接」输入 user@host:port 和密码后再连。'
         );
         return;
       }
 
       try {
+        setStatusLine(`Connecting ${tab.username}@${tab.host}…`);
         const ssh = await connectSshShell({
           host: tab.host,
           port: tab.port,
@@ -130,7 +152,8 @@ export const TerminalView: React.FC<Props> = ({
             password: tab.password,
             privateKeyPem: tab.privateKey,
           },
-          relayUrl: relayUrl || undefined,
+          // Only pass if user explicitly configured advanced bridge
+          relayUrl: relayUrl?.trim() || undefined,
           cols: 120,
           rows: 40,
           onStatus: (msg) => {
@@ -149,33 +172,22 @@ export const TerminalView: React.FC<Props> = ({
         setTransportName(modeLabel(ssh.mode));
         setStatus('connected');
         setStatusLine('');
-        register(
-          ssh.mode === 'direct'
-            ? 'direct'
-            : ssh.mode === 'local-relay'
-              ? 'local-relay'
-              : 'relay'
-        );
+        register(ssh.mode === 'direct' ? 'direct' : 'relay');
 
-        // Keep terminal resize in sync with remote PTY
         const fitResize = () => {
           try {
             engine1.resize();
-            const dims = engine1.terminal;
-            ssh.resize(dims.cols, dims.rows);
+            ssh.resize(engine1.terminal.cols, engine1.terminal.rows);
           } catch {
             /* ignore */
           }
         };
         window.addEventListener('resize', fitResize);
-        // store cleanup on sshRef via property
-        (ssh as any)._fitResize = fitResize;
+        (ssh as unknown as { _fitResize: () => void })._fitResize = fitResize;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        engine1.terminal.writeln(`\r\n\x1b[1;31mSSH Error:\x1b[0m ${message}\r\n`);
-        setStatus('error');
-        // Fall back to offline so tab remains interactive
-        await connectOffline('真实 SSH 失败，已回退 Offline Shell。');
+        showConnectError(message);
+        // Do NOT auto-fallback to offline — keep Xshell-like fail semantics
       }
     };
 
@@ -197,9 +209,9 @@ export const TerminalView: React.FC<Props> = ({
     return () => {
       cancelled = true;
       window.removeEventListener('resize', handleResize);
-      const ssh = sshRef.current;
-      if (ssh && (ssh as any)._fitResize) {
-        window.removeEventListener('resize', (ssh as any)._fitResize);
+      const ssh = sshRef.current as (SshShellSession & { _fitResize?: () => void }) | null;
+      if (ssh?._fitResize) {
+        window.removeEventListener('resize', ssh._fitResize);
       }
       void sshRef.current?.close();
       sshRef.current = null;
@@ -209,7 +221,6 @@ export const TerminalView: React.FC<Props> = ({
     };
   }, [tab.id, tab.host, tab.port, tab.username, tab.password, tab.privateKey, tab.forceOffline, relayUrl]);
 
-  // Split pane offline
   useEffect(() => {
     if (tab.splitMode && tab.splitMode !== 'none') {
       const engine2 = new TerminalEngine(currentTheme);
@@ -286,10 +297,8 @@ export const TerminalView: React.FC<Props> = ({
           <span className={`flex items-center gap-1.5 shrink-0 ${statusColor}`}>
             {connectionMode === 'offline' ? (
               <WifiOff className="h-3.5 w-3.5" />
-            ) : connectionMode === 'direct' ? (
+            ) : status === 'connected' ? (
               <Zap className="h-3.5 w-3.5" />
-            ) : connectionMode.includes('relay') ? (
-              <Link2 className="h-3.5 w-3.5" />
             ) : (
               <ShieldCheck className="h-3.5 w-3.5" />
             )}

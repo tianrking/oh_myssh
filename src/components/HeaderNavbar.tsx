@@ -86,11 +86,11 @@ export const HeaderNavbar: React.FC<Props> = ({
 
       {/* Right Capabilities & Actions */}
       <div className="flex items-center gap-2">
-        {/* Relay Settings button */}
+        {/* Advanced optional bridge — not the default path */}
         <button
           onClick={onOpenRelaySettings}
-          title={t('relaySettingsTitle')}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800 bg-slate-900/60 text-slate-400 hover:border-cyan-500/30 hover:text-cyan-300 transition-all"
+          title="高级：可选 TCP 桥（默认不需要，直连优先）"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800 bg-slate-900/60 text-slate-500 hover:border-slate-600 hover:text-slate-300 transition-all opacity-70"
         >
           <Network className="h-4 w-4" />
         </button>
@@ -147,18 +147,18 @@ export const HeaderNavbar: React.FC<Props> = ({
         <div
           title={
             hasDirectSockets
-              ? t('directSocketsTooltip')
-              : t('webModeTooltip')
+              ? 'Direct Sockets：可像 Xshell 一样直连 VPS'
+              : 'SSH2 客户端 · 默认直连 · 本地请 npm run dev'
           }
           className="hidden lg:flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-1 text-[11px] font-mono"
         >
           <span
             className={`h-2 w-2 rounded-full ${
-              hasDirectSockets ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+              hasDirectSockets ? 'bg-emerald-400 animate-pulse' : 'bg-cyan-400'
             }`}
           />
-          <span className={hasDirectSockets ? 'text-emerald-300' : 'text-amber-300'}>
-            {hasDirectSockets ? t('directSocketsReady') : t('offlineRelay')}
+          <span className={hasDirectSockets ? 'text-emerald-300' : 'text-cyan-300'}>
+            {hasDirectSockets ? 'Direct TCP' : 'SSH2 Direct'}
           </span>
         </div>
 
