@@ -10,7 +10,7 @@ import {
   Network
 } from 'lucide-react';
 import { DirectSocketsTransport } from '../core/socket/transport';
-import { t, getLanguage, setLanguage, subscribeLanguageChange, type SupportedLanguage } from '../core/i18n';
+import { t, getLanguage, setLanguage, subscribeLanguageChange, LANGUAGE_LABELS, type SupportedLanguage } from '../core/i18n';
 
 interface Props {
   onOpenQuickConnect: () => void;
@@ -89,7 +89,7 @@ export const HeaderNavbar: React.FC<Props> = ({
         {/* Relay Settings button */}
         <button
           onClick={onOpenRelaySettings}
-          title="配置 WebSocket SSH Relay 中继代理"
+          title={t('relaySettingsTitle')}
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800 bg-slate-900/60 text-slate-400 hover:border-cyan-500/30 hover:text-cyan-300 transition-all"
         >
           <Network className="h-4 w-4" />
@@ -124,7 +124,7 @@ export const HeaderNavbar: React.FC<Props> = ({
           }`}
         >
           <Radio className="h-3.5 w-3.5" />
-          <span className="hidden md:inline">广播</span>
+          <span className="hidden md:inline">{t('broadcast')}</span>
         </button>
 
         {/* i18n Selector */}
@@ -135,8 +135,11 @@ export const HeaderNavbar: React.FC<Props> = ({
             onChange={(e) => handleLanguageToggle(e.target.value as SupportedLanguage)}
             className="bg-transparent text-slate-300 focus:outline-none cursor-pointer text-[11px]"
           >
-            <option value="zh-CN" className="bg-slate-900 text-slate-200">简体中文</option>
-            <option value="en-US" className="bg-slate-900 text-slate-200">English</option>
+            {(Object.keys(LANGUAGE_LABELS) as SupportedLanguage[]).map((code) => (
+              <option key={code} value={code} className="bg-slate-900 text-slate-200">
+                {LANGUAGE_LABELS[code]}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -144,8 +147,8 @@ export const HeaderNavbar: React.FC<Props> = ({
         <div
           title={
             hasDirectSockets
-              ? 'Chromium Direct Sockets (IWA) 权限就绪：直连 TCP/22'
-              : '浏览器当前运行在普通 Web 模式 (使用 WASM/Mock 或 Relay 中继通道)'
+              ? t('directSocketsTooltip')
+              : t('webModeTooltip')
           }
           className="hidden lg:flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-1 text-[11px] font-mono"
         >
@@ -155,7 +158,7 @@ export const HeaderNavbar: React.FC<Props> = ({
             }`}
           />
           <span className={hasDirectSockets ? 'text-emerald-300' : 'text-amber-300'}>
-            {hasDirectSockets ? 'DirectSockets IWA' : 'Web/Mock Mode'}
+            {hasDirectSockets ? t('directSocketsReady') : t('offlineRelay')}
           </span>
         </div>
 

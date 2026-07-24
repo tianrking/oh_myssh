@@ -48,27 +48,54 @@ export class OhMySSHDatabase extends Dexie {
 
 export const db = new OhMySSHDatabase();
 
+const OFFLINE_HOST: HostProfile = {
+  name: '离线开发 Shell (Demo)',
+  host: 'offline.local',
+  port: 22,
+  username: 'ubuntu',
+  authType: 'password',
+  group: '本地 / 离线',
+  tags: ['Offline', 'Demo', 'Dev'],
+  color: '#06b6d4',
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+};
+
 /**
- * 演示用预设主机列表 (首次加载为空时初始化)
+ * Seed demo hosts & snippets. Offline host is first so default open always works.
+ * Also migrates older DBs that lack an Offline-tagged host.
  */
 export async function seedInitialDataIfNeeded() {
   const count = await db.hosts.count();
   if (count === 0) {
     await db.hosts.bulkAdd([
+      OFFLINE_HOST,
       {
-        name: '生产主服务器 (US-West)',
+        name: '本地回环演示',
+        host: '127.0.0.1',
+        port: 22,
+        username: 'root',
+        authType: 'password',
+        group: '本地 / 离线',
+        tags: ['Offline', 'Local'],
+        color: '#8b5cf6',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+      {
+        name: '生产主服务器 (示例)',
         host: '192.168.1.100',
         port: 22,
         username: 'root',
         authType: 'password',
         group: '生产集群',
-        tags: ['Production', 'K8s', 'US'],
+        tags: ['Production', 'K8s'],
         color: '#ef4444',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       },
       {
-        name: '开发测试机 (Dev-Node)',
+        name: '开发测试机',
         host: 'dev.internal.net',
         port: 22,
         username: 'ubuntu',
@@ -84,9 +111,9 @@ export async function seedInitialDataIfNeeded() {
         host: 'hk.gateway.io',
         port: 2222,
         username: 'admin',
-        authType: 'password',
+        authType: 'privateKey',
         group: '跳板机',
-        tags: ['Proxy', 'BGP'],
+        tags: ['Proxy', 'Jump'],
         color: '#10b981',
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -94,10 +121,23 @@ export async function seedInitialDataIfNeeded() {
     ]);
 
     await db.snippets.bulkAdd([
-      { title: '查看系统资源监控', command: 'htop || top', category: '运维诊断' },
-      { title: 'Docker 容器实时状态', command: 'docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"', category: 'Docker' },
-      { title: '查看磁盘占用排行', command: 'du -sh * | sort -hr | head -n 10', category: '磁盘清理' },
-      { title: '查看网络监听端口', command: 'netstat -tulpn || ss -tulpn', category: '网络调试' },
+      { title: '系统资源监控', command: 'htop || top', category: '运维诊断' },
+      { title: 'Docker 容器状态', command: 'docker ps', category: 'Docker' },
+      { title: '磁盘占用排行', command: 'df -h', category: '磁盘清理' },
+      { title: '进程列表', command: 'ps', category: '运维诊断' },
+      { title: 'Git 状态', command: 'git status', category: '开发' },
+      { title: '系统信息', command: 'neofetch', category: '系统' },
+      { title: '目录树', command: 'tree', category: '文件系统' },
+      { title: '当前路径', command: 'pwd', category: '文件系统' },
     ]);
+    return;
+  }
+
+  // Migration: ensure offline demo host exists for older installs
+  const hasOffline = await db.hosts
+    .filter((h) => h.host === 'offline.local' || (h.tags || []).includes('Offline'))
+    .count();
+  if (hasOffline === 0) {
+    await db.hosts.add({ ...OFFLINE_HOST, createdAt: Date.now(), updatedAt: Date.now() });
   }
 }

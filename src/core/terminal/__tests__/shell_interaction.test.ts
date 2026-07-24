@@ -4,7 +4,7 @@ import { TerminalEngine } from '../engine';
 import { MockSocketTransport } from '../../socket/transport';
 
 if (typeof window !== 'undefined' && !window.matchMedia) {
-  window.matchMedia = (query: string) => ({
+  window.matchMedia = ((query: string) => ({
     matches: false,
     media: query,
     onchange: null,
@@ -13,7 +13,7 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
     addEventListener: () => {},
     removeEventListener: () => {},
     dispatchEvent: () => false,
-  }) as any;
+  })) as any;
 }
 
 describe('SSH 终端 Shell 交互与输入输出全流程可靠性测试', () => {
@@ -25,16 +25,15 @@ describe('SSH 终端 Shell 交互与输入输出全流程可靠性测试', () =>
     engine.mount(container);
 
     const transport = new MockSocketTransport();
-    const stream = await transport.connect('test.node', 22);
+    const stream = await transport.connect('test.node', 22, 'root');
 
     engine.attachStream(stream);
 
-    // 等待默认欢迎横幅生成
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 80));
 
     const logs = engine.exportLog();
-    expect(logs).toContain('Connected to test.node:22');
-    expect(logs).toContain('Oh My SSH WASM engine');
+    expect(logs).toContain('test.node');
+    expect(logs).toMatch(/Offline Interactive Shell|Oh My SSH/);
 
     engine.dispose();
     document.body.removeChild(container);
@@ -47,12 +46,14 @@ describe('SSH 终端 Shell 交互与输入输出全流程可靠性测试', () =>
     const engine = new TerminalEngine('oneDark');
     engine.mount(container);
 
-    let receivedBytes: Uint8Array[] = [];
+    const receivedBytes: Uint8Array[] = [];
 
     const mockStream = {
       readable: new ReadableStream<Uint8Array>({
         start(ctrl) {
-          ctrl.enqueue(new TextEncoder().encode('\x1b[31mRed Text\x1b[0m \x1b[32mGreen Text\x1b[0m\r\n'));
+          ctrl.enqueue(
+            new TextEncoder().encode('\x1b[31mRed Text\x1b[0m \x1b[32mGreen Text\x1b[0m\r\n')
+          );
         },
       }),
       writable: new WritableStream<Uint8Array>({
@@ -71,7 +72,6 @@ describe('SSH 终端 Shell 交互与输入输出全流程可靠性测试', () =>
     expect(log).toContain('Red Text');
     expect(log).toContain('Green Text');
 
-    // 测试向终端引擎写入命令
     engine.writeInput('ls -la\r\n');
     await new Promise((r) => setTimeout(r, 50));
 
@@ -90,13 +90,11 @@ describe('SSH 终端 Shell 交互与输入输出全流程可靠性测试', () =>
     const engine = new TerminalEngine('dracula');
     engine.mount(container);
 
-    let totalBytesReceived = 0;
-    const sampleChunk = new Uint8Array(1024).fill(65); // 'A'
+    const sampleChunk = new Uint8Array(1024).fill(65);
 
     const stream = {
       readable: new ReadableStream<Uint8Array>({
         start(ctrl) {
-          // 推入 10 块 1KB 数据 (共 10KB)
           for (let i = 0; i < 10; i++) {
             ctrl.enqueue(sampleChunk);
           }
@@ -104,9 +102,7 @@ describe('SSH 终端 Shell 交互与输入输出全流程可靠性测试', () =>
         },
       }),
       writable: new WritableStream<Uint8Array>({
-        write(chunk) {
-          totalBytesReceived += chunk.byteLength;
-        },
+        write() {},
       }),
       close: async () => {},
     };
@@ -114,8 +110,8 @@ describe('SSH 终端 Shell 交互与输入输出全流程可靠性测试', () =>
     engine.attachStream(stream);
     await new Promise((r) => setTimeout(r, 100));
 
-    // 验证全量 10KB 数据消费没有中断或抛异常
     expect(engine.terminal).toBeDefined();
+    expect(engine.exportLog().length).toBeGreaterThan(0);
 
     engine.dispose();
     document.body.removeChild(container);

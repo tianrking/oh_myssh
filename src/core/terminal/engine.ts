@@ -1,7 +1,8 @@
-import { Terminal, type ITerminalOptions } from '@xterm/xterm';
+import { Terminal, type ITerminalOptions, type IDisposable } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { DuplexByteStream } from '../socket/transport';
+import { StreamFrameBatcher } from './batcher';
 
 export interface TerminalThemeOptions {
   name: string;
@@ -82,6 +83,8 @@ export const TERMINAL_THEMES: Record<string, ITerminalOptions['theme']> = {
   },
 };
 
+const MAX_LOG_CHARS = 2_000_000;
+
 export class TerminalEngine {
   public terminal: Terminal;
   public fitAddon: FitAddon;
@@ -91,22 +94,29 @@ export class TerminalEngine {
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private isConnected = false;
   private logBuffer: string[] = [];
+  private logChars = 0;
   private isComposing = false;
   private containerElement: HTMLElement | null = null;
+  private dataDisposable: IDisposable | null = null;
+  private batcher: StreamFrameBatcher | null = null;
+  private readAbort = false;
 
   constructor(themeName: string = 'cyberpunk', scrollback: number = 10000) {
     this.terminal = new Terminal({
       cursorBlink: true,
       cursorStyle: 'block',
       fontSize: 14,
-      fontFamily: "'Fira Code', ui-monospace, Menlo, Monaco, Consolas, monospace",
+      fontFamily:
+        "'Fira Code', 'SF Mono', ui-monospace, Menlo, Monaco, Consolas, monospace",
       theme: TERMINAL_THEMES[themeName] || TERMINAL_THEMES.cyberpunk,
       allowProposedApi: true,
-      smoothScrollDuration: 0, // 消除滚动延迟
+      smoothScrollDuration: 0,
       macOptionIsMeta: true,
-      scrollback: scrollback,
+      scrollback,
       rightClickSelectsWord: true,
       fastScrollModifier: 'alt',
+      convertEol: false,
+      windowsMode: false,
     });
 
     this.fitAddon = new FitAddon();
@@ -116,17 +126,14 @@ export class TerminalEngine {
   public mount(container: HTMLElement) {
     this.containerElement = container;
     this.terminal.open(container);
-    
-    // 自动挂载 WebGL 加速，失败时优雅降级 2D Canvas
     this.enableWebGL();
-
-    // 绑定 macOS 输入法 IME 合成事件与 DOM 点击 Focus 抢占
     this.bindInputOptimizations(container);
 
-    setTimeout(() => {
+    // Fit after layout settles
+    requestAnimationFrame(() => {
       this.fitAddon.fit();
       this.terminal.focus();
-    }, 30);
+    });
   }
 
   public enableWebGL(): boolean {
@@ -150,20 +157,22 @@ export class TerminalEngine {
     if (this.webglAddon) {
       try {
         this.webglAddon.dispose();
-      } catch (e) {}
+      } catch {
+        /* ignore */
+      }
       this.webglAddon = null;
     }
   }
 
   private bindInputOptimizations(container: HTMLElement) {
-    // 监听容器点击强行抢占 Focus，保障打字输入零卡顿
     container.addEventListener('click', () => {
       this.terminal.focus();
     });
 
-    // 监听隐藏 textarea 的 macOS 输入法 Composition 事件
     setTimeout(() => {
-      const helperTextarea = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement;
+      const helperTextarea = container.querySelector(
+        '.xterm-helper-textarea'
+      ) as HTMLTextAreaElement | null;
       if (helperTextarea) {
         helperTextarea.addEventListener('compositionstart', () => {
           this.isComposing = true;
@@ -172,50 +181,104 @@ export class TerminalEngine {
           this.isComposing = false;
         });
       }
-    }, 100);
+    }, 80);
   }
 
   public attachStream(stream: DuplexByteStream) {
+    // Tear down previous stream if any
+    this.detachStream();
+
     this.stream = stream;
     this.isConnected = true;
+    this.readAbort = false;
 
     this.reader = stream.readable.getReader();
     this.writer = stream.writable.getWriter();
 
-    // 监听键盘输入数据，毫秒级直接送达传输管道
-    this.terminal.onData((data) => {
+    // Frame batcher: merge high-frequency chunks to ~60fps without losing bytes
+    this.batcher = new StreamFrameBatcher((chunk) => {
+      this.terminal.write(chunk);
+      this.appendLog(new TextDecoder().decode(chunk));
+    });
+
+    this.dataDisposable = this.terminal.onData((data) => {
+      if (this.isComposing) return;
       if (this.writer && this.isConnected) {
-        const encoder = new TextEncoder();
-        this.writer.write(encoder.encode(data));
+        void this.writer.write(new TextEncoder().encode(data));
       }
     });
 
-    // 读取 Socket 字节数据渲染到 Terminal
-    this.readLoop();
+    void this.readLoop();
+  }
+
+  private detachStream() {
+    this.readAbort = true;
+    this.isConnected = false;
+    this.batcher?.flushImmediately();
+    this.batcher?.clear();
+    this.batcher = null;
+
+    if (this.dataDisposable) {
+      this.dataDisposable.dispose();
+      this.dataDisposable = null;
+    }
+    if (this.reader) {
+      void this.reader.cancel().catch(() => {});
+      this.reader = null;
+    }
+    if (this.writer) {
+      void this.writer.close().catch(() => {});
+      this.writer = null;
+    }
+    if (this.stream) {
+      void this.stream.close().catch(() => {});
+      this.stream = null;
+    }
   }
 
   public writeInput(data: string) {
     if (this.writer && this.isConnected) {
-      const encoder = new TextEncoder();
-      this.writer.write(encoder.encode(data));
+      void this.writer.write(new TextEncoder().encode(data));
+    }
+  }
+
+  public focus() {
+    this.terminal.focus();
+  }
+
+  public get connected(): boolean {
+    return this.isConnected;
+  }
+
+  private appendLog(text: string) {
+    this.logBuffer.push(text);
+    this.logChars += text.length;
+    // Bound memory for long-running sessions
+    while (this.logChars > MAX_LOG_CHARS && this.logBuffer.length > 1) {
+      const removed = this.logBuffer.shift()!;
+      this.logChars -= removed.length;
     }
   }
 
   private async readLoop() {
     if (!this.reader) return;
     try {
-      while (this.isConnected) {
+      while (this.isConnected && !this.readAbort) {
         const { value, done } = await this.reader.read();
         if (done) break;
-        if (value) {
-          this.terminal.write(value);
-          const decoded = new TextDecoder().decode(value);
-          this.logBuffer.push(decoded);
+        if (value && this.batcher) {
+          this.batcher.push(value);
         }
       }
     } catch (err) {
-      console.error('Terminal Stream read error:', err);
+      if (!this.readAbort) {
+        console.error('Terminal Stream read error:', err);
+        this.terminal.writeln(
+          `\r\n\x1b[1;31m[stream closed]\x1b[0m ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
     } finally {
+      this.batcher?.flushImmediately();
       this.isConnected = false;
     }
   }
@@ -227,8 +290,8 @@ export class TerminalEngine {
   public resize() {
     try {
       this.fitAddon.fit();
-    } catch (e) {
-      // 忽略解挂时的布局计算错误
+    } catch {
+      // ignore unmounted layout errors
     }
   }
 
@@ -239,17 +302,9 @@ export class TerminalEngine {
   }
 
   public dispose() {
-    this.isConnected = false;
+    this.detachStream();
     this.disableWebGL();
-    if (this.reader) {
-      this.reader.cancel().catch(() => {});
-    }
-    if (this.writer) {
-      this.writer.close().catch(() => {});
-    }
-    if (this.stream) {
-      this.stream.close().catch(() => {});
-    }
     this.terminal.dispose();
+    this.containerElement = null;
   }
 }

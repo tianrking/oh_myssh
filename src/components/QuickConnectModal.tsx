@@ -9,9 +9,9 @@ interface Props {
 }
 
 export const QuickConnectModal: React.FC<Props> = ({ isOpen, onClose, onConnect }) => {
-  const [connectionString, setConnectionString] = useState('root@192.168.1.100:22');
+  const [connectionString, setConnectionString] = useState('ubuntu@offline.local:22');
   const [authType, setAuthType] = useState<'password' | 'privateKey'>('password');
-  const [password, setPassword] = useState('admin123');
+  const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
   const [group, setGroup] = useState('默认分组');
 
@@ -92,7 +92,7 @@ export const QuickConnectModal: React.FC<Props> = ({ isOpen, onClose, onConnect 
                 required
                 value={connectionString}
                 onChange={(e) => setConnectionString(e.target.value)}
-                placeholder="root@192.168.1.100:22"
+                placeholder="ubuntu@offline.local:22 或 root@192.168.1.10:22"
                 className="w-full rounded-xl border border-slate-700/60 bg-slate-950/60 py-2.5 pl-10 pr-4 text-sm text-cyan-300 font-mono focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
               />
             </div>
