@@ -19,8 +19,13 @@ export interface TabItem {
   host: string;
   port: number;
   username: string;
+  /** Session password kept only in memory — never written to disk by default */
+  password?: string;
+  privateKey?: string;
   splitMode?: 'none' | 'vertical' | 'horizontal';
   theme?: string;
+  /** When true, skip real SSH and force offline shell */
+  forceOffline?: boolean;
 }
 
 interface Props {

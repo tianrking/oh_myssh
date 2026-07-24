@@ -87,7 +87,7 @@ export function App() {
 
   const handleConnectHost = useCallback(
     async (host: HostProfile | Partial<HostProfile>, options?: { save?: boolean }) => {
-      // Persist new quick-connect profiles
+      // Persist host metadata only — never write passwords/keys to IndexedDB here
       if (options?.save !== false && !host.id && host.host) {
         try {
           const id = await db.hosts.add({
@@ -96,8 +96,6 @@ export function App() {
             port: host.port || 22,
             username: host.username || 'root',
             authType: host.authType || 'password',
-            password: host.password,
-            privateKey: host.privateKey,
             group: host.group || '默认分组',
             tags: host.tags || ['QuickConnect'],
             color: host.color || '#06b6d4',
@@ -119,6 +117,13 @@ export function App() {
         host: host.host || 'offline.local',
         port: host.port || 22,
         username: host.username || 'root',
+        // Credentials stay in-memory for this session tab only
+        password: host.password,
+        privateKey: host.privateKey,
+        forceOffline:
+          host.host === 'offline.local' ||
+          (host.tags || []).includes('Offline') ||
+          host.host?.includes('offline'),
         splitMode: 'none',
       };
       setTabs((prev) => [...prev, newTab]);
@@ -129,6 +134,7 @@ export function App() {
   );
 
   const handleOpenSFTP = useCallback((host: HostProfile) => {
+    // SFTP needs credentials — prompt via quick connect if missing
     const newTab: TabItem = {
       id: 'sftp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
       title: `[SFTP] ${host.name}`,
@@ -136,6 +142,8 @@ export function App() {
       host: host.host,
       port: host.port,
       username: host.username,
+      password: host.password,
+      privateKey: host.privateKey,
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newTab.id);
@@ -351,7 +359,7 @@ export function App() {
                       isActive={tab.id === activeTabId}
                     />
                   ) : (
-                    <SftpView tab={tab} />
+                    <SftpView tab={tab} relayUrl={relayUrl} />
                   )}
                 </div>
               ))}

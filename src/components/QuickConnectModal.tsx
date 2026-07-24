@@ -9,7 +9,7 @@ interface Props {
 }
 
 export const QuickConnectModal: React.FC<Props> = ({ isOpen, onClose, onConnect }) => {
-  const [connectionString, setConnectionString] = useState('ubuntu@offline.local:22');
+  const [connectionString, setConnectionString] = useState('root@de.w0x7ce.eu:22');
   const [authType, setAuthType] = useState<'password' | 'privateKey'>('password');
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
@@ -68,7 +68,7 @@ export const QuickConnectModal: React.FC<Props> = ({ isOpen, onClose, onConnect 
             </div>
             <div>
               <h3 className="font-semibold text-slate-100 text-lg">快速连接主机</h3>
-              <p className="text-xs text-slate-400">输入任意 user@host:port 直接建立会话</p>
+              <p className="text-xs text-slate-400">真实 SSH2：填写密码后连接任意标准 OpenSSH 服务器</p>
             </div>
           </div>
           <button
@@ -92,7 +92,7 @@ export const QuickConnectModal: React.FC<Props> = ({ isOpen, onClose, onConnect 
                 required
                 value={connectionString}
                 onChange={(e) => setConnectionString(e.target.value)}
-                placeholder="ubuntu@offline.local:22 或 root@192.168.1.10:22"
+                placeholder="root@host:22"
                 className="w-full rounded-xl border border-slate-700/60 bg-slate-950/60 py-2.5 pl-10 pr-4 text-sm text-cyan-300 font-mono focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
               />
             </div>

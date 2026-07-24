@@ -5,7 +5,7 @@
 
 import type { TerminalEngine } from '../terminal/engine';
 
-export type SessionMode = 'direct' | 'relay' | 'offline' | 'unknown';
+export type SessionMode = 'direct' | 'relay' | 'offline' | 'unknown' | 'local-relay';
 
 export interface SessionEntry {
   tabId: string;

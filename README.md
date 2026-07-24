@@ -1,23 +1,26 @@
 # Oh My SSH
 
-> WebSSH 的直连能力，Xshell 的稳定会话，MobaXterm 的桌面工作区，以及现代 Web 产品的离线体验。
+> 纯前端 · 真实 SSH2 · Xshell 级工作区 · 离线也能用
 
-**Oh My SSH** 是一个本地优先、严格纯前端的 SSH/SFTP 现代桌面级工作区。默认提供高性能 **Offline Interactive Shell**（完全可离线）；在 Chromium IWA 下走 Direct Sockets 直连 TCP/22；或配置 WebSocket Relay 连接真实 SSH。
+**Oh My SSH** 是本地优先的纯前端 SSH/SFTP 桌面工作区。浏览器内运行完整 **SSH2 协议栈**（`@microsoft/dev-tunnels-ssh` + WebCrypto），配合 xterm.js WebGL 终端、多标签分屏、双栏 SFTP 与加密 Vault。
 
-当前状态：**核心工作区可用 · 全量 Vitest 29/29 通过 · 离线优先可交付**。
+已在真实主机上验证：**密码认证 Shell + 交互命令** 通过 E2E。
 
 ---
 
-## 核心特性
+## 功能一览
 
-- **零后端纯前端**：HTML / CSS / TypeScript / WASM / 浏览器 API，无项目后端。
-- **始终可用的离线 Shell**：虚拟文件系统、readline（历史/补全/Ctrl 组合键）、常用运维命令。
-- **连接决策树**：DirectSockets (IWA) → WebSocket Relay → Offline Shell（失败自动回退）。
-- **会话保活**：多标签全部挂载，切换 Tab 不销毁 SSH/离线会话。
-- **Xshell 风格工作区**：多标签、左右/上下分屏、主机树、⌘K 命令面板、广播输入。
-- **xterm.js + WebGL + StreamFrameBatcher**：GPU 渲染 + 帧批处理背压。
-- **加密 Vault（WebCrypto AES-256-GCM）** + IndexedDB 主机/片段存储。
-- **双栏 SFTP + OPFS**：本地侧真实 OPFS 列表与流式写入。
+| 能力 | 状态 |
+|------|------|
+| 真实 SSH2 握手 / 密码认证 / PTY Shell | ✅ |
+| SFTP v3（列表 / 上传 / 下载） | ✅ |
+| 多标签保活 + 左右/上下分屏 | ✅ |
+| 广播输入 / 命令片段 / 会话日志导出 | ✅ |
+| Offline Interactive Shell（无网络） | ✅ |
+| Direct Sockets（Chromium IWA） | ✅ |
+| 开发态 WS→TCP 中继（`npm run dev`） | ✅ |
+| 自定义 WebSocket Relay | ✅ |
+| 主题 / WebGL·Canvas 切换 / 快捷键 | ✅ |
 
 ---
 
@@ -25,65 +28,75 @@
 
 ```bash
 npm install
-npm test          # 29 tests
+npm test              # 单元测试
+npm run test:ssh      # 真实 SSH E2E（需环境变量密码）
+npm run dev           # http://localhost:3000  内置 WS→TCP 中继
 npm run build
-npm run dev       # http://localhost:5173
+npm run preview       # 预览同样带中继
 ```
 
-### 真实 SSH 路径
+### 连接真实服务器（推荐流程）
 
-| 模式 | 条件 | 说明 |
-|------|------|------|
-| **Offline Shell** | 默认 | 纯本地，无网络，完整开发演示体验 |
-| **Direct Sockets** | Chromium IWA + `TCPSocket` | 浏览器直连目标 TCP/22 |
-| **WebSocket Relay** | 顶部 Relay 配置 `wss://...` | 经自建网关转发真实 SSH |
+1. `npm run dev`
+2. 打开 **快速连接**
+3. 输入 `user@host:port` 与密码
+4. 状态栏显示 **Local WS→TCP + SSH2** 即真实会话
 
-普通网页 **不能** 直接打开任意 TCP/22（W3C 安全模型）。要连真实服务器：安装 IWA，或自建 WebSocket SSH 网关后在 UI 中配置 Relay。
+传输路径：
+
+```text
+浏览器 SSH2 客户端  →  WebSocket  →  Vite 本地中继  →  TCP/22  →  OpenSSH
+```
+
+生产静态托管时：
+
+- 使用 **Chromium IWA Direct Sockets**，或
+- 配置自建 **WebSocket → TCP Relay**（顶部 Network 按钮）
+
+> 普通网页无法直接打开 TCP 端口，这是浏览器安全模型，不是本项目缺陷。
+
+### 真实 SSH E2E 测试
+
+```bash
+export OMS_SSH_HOST=your.server
+export OMS_SSH_USER=root
+export OMS_SSH_PASSWORD='your-password'
+npm run test:ssh
+```
+
+**切勿把密码提交到 Git。** 密码仅存于当前标签页内存，不写入 IndexedDB。
 
 ---
 
 ## 快捷键
 
-| 快捷键 | 功能 |
-|--------|------|
-| `⌘/Ctrl + K` | 命令面板 / 片段 |
-| `⌘/Ctrl + T` | 新建连接 |
-| `⌘/Ctrl + W` | 关闭当前标签 |
-| `Ctrl + Tab` | 切换标签 |
-| `⌘/Ctrl + Shift + B` | 广播输入栏 |
-
-离线 Shell 内：`↑↓` 历史、`Tab` 补全、`Ctrl+C/L/U/W`。
+| 键 | 功能 |
+|----|------|
+| `⌘/Ctrl+K` | 命令面板 |
+| `⌘/Ctrl+T` | 新建连接 |
+| `⌘/Ctrl+W` | 关闭标签 |
+| `Ctrl+Tab` | 切换标签 |
+| `⌘/Ctrl+Shift+B` | 广播栏 |
 
 ---
 
 ## 架构
 
 ```text
-UI (React)
-  ├── Host Tree / Tabs / Splits / SFTP / Palette
-  └── TerminalEngine (xterm.js + WebGL + Batcher)
+React Workspace
+  ├── TerminalEngine (xterm.js + WebGL + StreamFrameBatcher)
+  ├── SessionRegistry (broadcast / snippets / logs)
+  └── SSH2 Client (@microsoft/dev-tunnels-ssh + WebCrypto)
           │
-          ▼
-    SessionRegistry  ←── broadcast / snippets / export log
+          ├── DirectSocketsTransport     (IWA)
+          ├── WebSocketRelayTransport    (自建 / 自定义)
+          └── Vite WS→TCP Relay          (dev/preview only)
           │
-          ▼
-    SocketTransport
-      ├── DirectSocketsTransport  (IWA)
-      ├── WebSocketRelayTransport (optional)
-      └── OfflineShellEngine      (always available)
+          ├── Shell channel + PTY
+          └── SFTP subsystem (v3)
 ```
 
----
-
-## 测试
-
-```bash
-npm test
-# Test Files  12 passed
-# Tests       29 passed
-```
-
-覆盖：Vault 加解密、OPFS 流、WASI 桥、帧批处理、Socket 决策、Offline Shell、Session Registry、终端管道稳定性。
+离线主机（`offline.local`）走 **Offline Interactive Shell**，无需网络。
 
 ---
 
@@ -91,17 +104,27 @@ npm test
 
 ```text
 src/
-├── components/     # 工作区 UI
+├── components/          # 工作区 UI
 ├── core/
-│   ├── session/    # 全局会话注册表
-│   ├── shell/      # 高性能离线 Shell
-│   ├── socket/     # Transport 抽象
-│   ├── terminal/   # xterm 引擎 + 批处理
-│   ├── vault/      # 加密与 IndexedDB
-│   ├── sftp/       # OPFS 流式引擎
-│   └── wasm/       # WASI 桥
-└── workers/        # SSH Worker 占位（WASM 协议扩展点）
+│   ├── ssh/             # 真实 SSH2 客户端 + SFTP + 传输适配
+│   ├── shell/           # 离线 Shell
+│   ├── session/         # 会话注册表
+│   ├── socket/          # Transport 抽象
+│   ├── terminal/        # xterm 引擎
+│   ├── vault/           # WebCrypto + Dexie
+│   └── sftp/            # OPFS 本地侧
+scripts/
+├── vite-ws-tcp-relay.ts # 开发中继插件
+└── e2e-ssh-check.mjs    # 真实主机 E2E
 ```
+
+---
+
+## 安全说明
+
+- 密码/私钥默认 **仅内存**，连接配置入库时不落盘明文凭据。
+- 服务端 host key 当前会话接受（后续可做 known_hosts UI）。
+- 开发中继仅绑定本机 Vite 进程，勿在公网暴露无鉴权中继。
 
 ---
 
@@ -114,6 +137,6 @@ src/
 
 ---
 
-## 许可证
+## License
 
 Apache-2.0

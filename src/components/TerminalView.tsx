@@ -1,16 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TerminalEngine } from '../core/terminal/engine';
-import {
-  MockSocketTransport,
-  DirectSocketsTransport,
-  WebSocketRelayTransport,
-  resolveConnectionMode,
-  type SocketTransport,
-  type ConnectionMode,
-} from '../core/socket/transport';
+import { MockSocketTransport, type ConnectionMode } from '../core/socket/transport';
+import { connectSshShell, type SshShellSession } from '../core/ssh/client';
 import { sessionRegistry, type SessionMode } from '../core/session/registry';
-import { Palette, RefreshCw, Cpu, ShieldCheck, WifiOff, Link2 } from 'lucide-react';
-import { t } from '../core/i18n';
+import { Palette, RefreshCw, Cpu, ShieldCheck, WifiOff, Link2, Zap } from 'lucide-react';
 import type { TabItem } from './WorkspaceTabs';
 
 interface Props {
@@ -20,19 +13,19 @@ interface Props {
   isActive?: boolean;
 }
 
-function modeLabel(mode: ConnectionMode): string {
+function modeLabel(mode: string): string {
   switch (mode) {
     case 'direct':
-      return 'Direct Sockets (IWA)';
+      return 'Direct Sockets + SSH2';
     case 'relay':
-      return 'WebSocket Relay';
-    default:
+      return 'Relay + SSH2';
+    case 'local-relay':
+      return 'Local WS→TCP + SSH2';
+    case 'offline':
       return 'Offline Interactive Shell';
+    default:
+      return mode;
   }
-}
-
-function toSessionMode(mode: ConnectionMode): SessionMode {
-  return mode;
 }
 
 export const TerminalView: React.FC<Props> = ({
@@ -43,18 +36,18 @@ export const TerminalView: React.FC<Props> = ({
 }) => {
   const containerRef1 = useRef<HTMLDivElement>(null);
   const containerRef2 = useRef<HTMLDivElement>(null);
-
   const engineRef1 = useRef<TerminalEngine | null>(null);
   const engineRef2 = useRef<TerminalEngine | null>(null);
+  const sshRef = useRef<SshShellSession | null>(null);
 
   const [currentTheme, setCurrentTheme] = useState(theme);
   const [transportName, setTransportName] = useState('Connecting…');
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>('offline');
+  const [connectionMode, setConnectionMode] = useState<string>('offline');
   const [connectedTime, setConnectedTime] = useState('');
   const [useWebGL, setUseWebGL] = useState(true);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [statusLine, setStatusLine] = useState('');
 
-  // External theme changes
   useEffect(() => {
     if (theme && theme !== currentTheme) {
       setCurrentTheme(theme);
@@ -63,7 +56,6 @@ export const TerminalView: React.FC<Props> = ({
     }
   }, [theme]);
 
-  // Refit + focus when tab becomes active (tabs stay mounted)
   useEffect(() => {
     if (isActive) {
       sessionRegistry.setActive(tab.id);
@@ -76,106 +68,155 @@ export const TerminalView: React.FC<Props> = ({
   }, [isActive, tab.id]);
 
   useEffect(() => {
+    let cancelled = false;
     setConnectedTime(new Date().toLocaleTimeString());
     setStatus('connecting');
+    setStatusLine('');
 
     const engine1 = new TerminalEngine(currentTheme);
     engineRef1.current = engine1;
-
     if (containerRef1.current) {
       engine1.mount(containerRef1.current);
     }
 
-    const probeAndConnect = async () => {
-      const mode = resolveConnectionMode(relayUrl);
-      setConnectionMode(mode);
-      setTransportName(modeLabel(mode));
+    const register = (mode: SessionMode) => {
+      sessionRegistry.register(tab.id, engine1, {
+        mode,
+        title: tab.title,
+        host: `${tab.username}@${tab.host}:${tab.port}`,
+      });
+      if (isActive) sessionRegistry.setActive(tab.id);
+    };
 
-      let transport: SocketTransport;
-      if (mode === 'direct') {
-        transport = new DirectSocketsTransport();
-      } else if (mode === 'relay') {
-        transport = new WebSocketRelayTransport(relayUrl!);
-      } else {
-        transport = new MockSocketTransport();
+    const connectOffline = async (reason?: string) => {
+      if (reason) {
+        engine1.terminal.writeln(`\x1b[33m${reason}\x1b[0m\r\n`);
+      }
+      const offline = new MockSocketTransport();
+      const stream = await offline.connect(tab.host, tab.port, tab.username);
+      if (cancelled) return;
+      engine1.attachStream(stream);
+      setConnectionMode('offline');
+      setTransportName(modeLabel('offline'));
+      setStatus('connected');
+      register('offline');
+    };
+
+    const connect = async () => {
+      // Explicit offline demo hosts / flag
+      if (
+        tab.forceOffline ||
+        tab.host === 'offline.local' ||
+        tab.host.includes('offline')
+      ) {
+        await connectOffline();
+        return;
+      }
+
+      // No credentials → offline with hint (still usable)
+      if (!tab.password && !tab.privateKey) {
+        await connectOffline(
+          '未提供密码/私钥 — 进入 Offline Shell。在快速连接中填写密码以使用真实 SSH。'
+        );
+        return;
       }
 
       try {
-        const stream = await transport.connect(tab.host, tab.port, tab.username);
-        engine1.attachStream(stream);
-        setStatus('connected');
-        setTransportName(transport.name);
-
-        sessionRegistry.register(tab.id, engine1, {
-          mode: toSessionMode(mode),
-          title: tab.title,
-          host: `${tab.username}@${tab.host}:${tab.port}`,
+        const ssh = await connectSshShell({
+          host: tab.host,
+          port: tab.port,
+          auth: {
+            username: tab.username,
+            password: tab.password,
+            privateKeyPem: tab.privateKey,
+          },
+          relayUrl: relayUrl || undefined,
+          cols: 120,
+          rows: 40,
+          onStatus: (msg) => {
+            if (!cancelled) setStatusLine(msg);
+          },
         });
 
-        if (isActive) {
-          sessionRegistry.setActive(tab.id);
+        if (cancelled) {
+          await ssh.close();
+          return;
         }
-      } catch (err: unknown) {
-        setStatus('error');
-        const message = err instanceof Error ? err.message : String(err);
-        engine1.terminal.writeln(`\r\n\x1b[1;31mConnection Error:\x1b[0m ${message}`);
 
-        // Graceful fallback: if direct/relay fails, open offline shell so the tab is still usable
-        if (mode !== 'offline') {
-          engine1.terminal.writeln(
-            '\x1b[33mFalling back to Offline Interactive Shell…\x1b[0m\r\n'
-          );
+        sshRef.current = ssh;
+        engine1.attachStream(ssh.stream);
+        setConnectionMode(ssh.mode);
+        setTransportName(modeLabel(ssh.mode));
+        setStatus('connected');
+        setStatusLine('');
+        register(
+          ssh.mode === 'direct'
+            ? 'direct'
+            : ssh.mode === 'local-relay'
+              ? 'local-relay'
+              : 'relay'
+        );
+
+        // Keep terminal resize in sync with remote PTY
+        const fitResize = () => {
           try {
-            const offline = new MockSocketTransport();
-            const stream = await offline.connect(tab.host, tab.port, tab.username);
-            engine1.attachStream(stream);
-            setConnectionMode('offline');
-            setTransportName(offline.name);
-            setStatus('connected');
-            sessionRegistry.register(tab.id, engine1, {
-              mode: 'offline',
-              title: tab.title,
-              host: `${tab.username}@${tab.host}:${tab.port}`,
-            });
-          } catch (fallbackErr: unknown) {
-            engine1.terminal.writeln(
-              `\x1b[1;31mOffline fallback failed:\x1b[0m ${
-                fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
-              }`
-            );
+            engine1.resize();
+            const dims = engine1.terminal;
+            ssh.resize(dims.cols, dims.rows);
+          } catch {
+            /* ignore */
           }
-        }
+        };
+        window.addEventListener('resize', fitResize);
+        // store cleanup on sshRef via property
+        (ssh as any)._fitResize = fitResize;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        engine1.terminal.writeln(`\r\n\x1b[1;31mSSH Error:\x1b[0m ${message}\r\n`);
+        setStatus('error');
+        // Fall back to offline so tab remains interactive
+        await connectOffline('真实 SSH 失败，已回退 Offline Shell。');
       }
     };
 
-    void probeAndConnect();
+    void connect();
 
     const handleResize = () => {
       engine1.resize();
+      const ssh = sshRef.current;
+      if (ssh) {
+        try {
+          ssh.resize(engine1.terminal.cols, engine1.terminal.rows);
+        } catch {
+          /* ignore */
+        }
+      }
     };
     window.addEventListener('resize', handleResize);
 
     return () => {
+      cancelled = true;
       window.removeEventListener('resize', handleResize);
+      const ssh = sshRef.current;
+      if (ssh && (ssh as any)._fitResize) {
+        window.removeEventListener('resize', (ssh as any)._fitResize);
+      }
+      void sshRef.current?.close();
+      sshRef.current = null;
       sessionRegistry.unregister(tab.id);
       engine1.dispose();
       engineRef1.current = null;
     };
-    // Intentionally only re-connect when session identity changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab.id, tab.host, tab.port, tab.username, relayUrl]);
+  }, [tab.id, tab.host, tab.port, tab.username, tab.password, tab.privateKey, tab.forceOffline, relayUrl]);
 
-  // Split pane terminal
+  // Split pane offline
   useEffect(() => {
     if (tab.splitMode && tab.splitMode !== 'none') {
       const engine2 = new TerminalEngine(currentTheme);
       engineRef2.current = engine2;
-      if (containerRef2.current) {
-        engine2.mount(containerRef2.current);
-      }
+      if (containerRef2.current) engine2.mount(containerRef2.current);
       const offline = new MockSocketTransport();
       offline.connect(tab.host, tab.port, tab.username).then((s) => engine2.attachStream(s));
-
       return () => {
         engine2.dispose();
         engineRef2.current = null;
@@ -183,7 +224,6 @@ export const TerminalView: React.FC<Props> = ({
     }
   }, [tab.splitMode, tab.id, tab.host, tab.port, tab.username]);
 
-  // Refit after split layout changes
   useEffect(() => {
     requestAnimationFrame(() => {
       engineRef1.current?.resize();
@@ -233,7 +273,6 @@ export const TerminalView: React.FC<Props> = ({
           ref={containerRef1}
           className="h-full w-full flex-1 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950 p-2 shadow-inner cursor-text"
         />
-
         {tab.splitMode && tab.splitMode !== 'none' && (
           <div
             ref={containerRef2}
@@ -243,11 +282,13 @@ export const TerminalView: React.FC<Props> = ({
       </div>
 
       <div className="flex h-7 items-center justify-between border-t border-slate-800/80 bg-slate-950 px-3 text-[11px] text-slate-400 font-mono select-none">
-        <div className="flex items-center gap-4">
-          <span className={`flex items-center gap-1.5 ${statusColor}`}>
+        <div className="flex items-center gap-4 min-w-0">
+          <span className={`flex items-center gap-1.5 shrink-0 ${statusColor}`}>
             {connectionMode === 'offline' ? (
               <WifiOff className="h-3.5 w-3.5" />
-            ) : connectionMode === 'relay' ? (
+            ) : connectionMode === 'direct' ? (
+              <Zap className="h-3.5 w-3.5" />
+            ) : connectionMode.includes('relay') ? (
               <Link2 className="h-3.5 w-3.5" />
             ) : (
               <ShieldCheck className="h-3.5 w-3.5" />
@@ -257,20 +298,20 @@ export const TerminalView: React.FC<Props> = ({
 
           <button
             onClick={handleRendererToggle}
-            title={t('rendererToggleTooltip')}
-            className="flex items-center gap-1 text-slate-300 hover:text-cyan-300 transition-colors"
+            className="flex items-center gap-1 text-slate-300 hover:text-cyan-300 transition-colors shrink-0"
           >
             <Cpu className={`h-3.5 w-3.5 ${useWebGL ? 'text-emerald-400' : 'text-amber-400'}`} />
-            <span>{useWebGL ? t('webglAccel') : t('canvasFast')}</span>
+            <span>{useWebGL ? 'WebGL' : 'Canvas'}</span>
           </button>
 
-          <span className="hidden sm:inline text-slate-500">
+          <span className="hidden md:inline text-slate-500 truncate">
             {tab.username}@{tab.host}:{tab.port}
             {connectedTime ? ` · ${connectedTime}` : ''}
+            {statusLine ? ` · ${statusLine}` : ''}
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <div className="flex items-center gap-1">
             <Palette className="h-3.5 w-3.5 text-slate-500" />
             <select
@@ -279,7 +320,7 @@ export const TerminalView: React.FC<Props> = ({
               className="bg-transparent text-[11px] text-slate-300 focus:outline-none cursor-pointer"
             >
               <option value="cyberpunk" className="bg-slate-900">
-                Cyberpunk Neon
+                Cyberpunk
               </option>
               <option value="oneDark" className="bg-slate-900">
                 One Dark
@@ -295,17 +336,19 @@ export const TerminalView: React.FC<Props> = ({
               </option>
             </select>
           </div>
-
           <button
             onClick={() => {
               engineRef1.current?.resize();
               engineRef1.current?.focus();
+              const ssh = sshRef.current;
+              if (ssh && engineRef1.current) {
+                ssh.resize(engineRef1.current.terminal.cols, engineRef1.current.terminal.rows);
+              }
             }}
-            title="Fit & Focus"
             className="flex items-center gap-1 hover:text-cyan-300 transition-colors"
           >
             <RefreshCw className="h-3 w-3" />
-            <span>{t('fitTerminal')}</span>
+            <span>Fit</span>
           </button>
         </div>
       </div>
