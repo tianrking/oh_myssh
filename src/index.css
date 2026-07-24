@@ -40,6 +40,12 @@
   border-radius: 4px;
 }
 
+/* Helper Textarea Optimizations for macOS IME typing */
+.xterm-helper-textarea {
+  outline: none !important;
+  opacity: 0.01 !important;
+}
+
 /* Glassmorphism utility */
 .glass-panel {
   background: rgba(15, 23, 42, 0.75);

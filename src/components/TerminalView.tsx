@@ -6,7 +6,7 @@ import {
   WebSocketRelayTransport,
   type SocketTransport
 } from '../core/socket/transport';
-import { Palette, RefreshCw, Cpu, Activity, ShieldCheck, Layers } from 'lucide-react';
+import { Palette, RefreshCw, Cpu, Activity, ShieldCheck, Layers, Zap } from 'lucide-react';
 import type { TabItem } from './WorkspaceTabs';
 
 interface Props {
@@ -23,6 +23,7 @@ export const TerminalView: React.FC<Props> = ({ tab }) => {
   const [currentTheme, setCurrentTheme] = useState('cyberpunk');
   const [transportName, setTransportName] = useState('Mock Interactive Shell');
   const [connectedTime, setConnectedTime] = useState<string>('');
+  const [useWebGL, setUseWebGL] = useState<boolean>(true);
 
   useEffect(() => {
     setConnectedTime(new Date().toLocaleTimeString());
@@ -86,6 +87,18 @@ export const TerminalView: React.FC<Props> = ({ tab }) => {
     engineRef2.current?.setTheme(themeName);
   };
 
+  const handleRendererToggle = () => {
+    const nextState = !useWebGL;
+    setUseWebGL(nextState);
+    if (nextState) {
+      engineRef1.current?.enableWebGL();
+      engineRef2.current?.enableWebGL();
+    } else {
+      engineRef1.current?.disableWebGL();
+      engineRef2.current?.disableWebGL();
+    }
+  };
+
   return (
     <div className="flex h-full w-full flex-col bg-slate-950">
       {/* Terminal View Container */}
@@ -100,13 +113,13 @@ export const TerminalView: React.FC<Props> = ({ tab }) => {
       >
         <div
           ref={containerRef1}
-          className="h-full w-full flex-1 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950 p-2 shadow-inner"
+          className="h-full w-full flex-1 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950 p-2 shadow-inner cursor-text"
         />
 
         {tab.splitMode && tab.splitMode !== 'none' && (
           <div
             ref={containerRef2}
-            className="h-full w-full flex-1 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950 p-2 shadow-inner"
+            className="h-full w-full flex-1 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950 p-2 shadow-inner cursor-text"
           />
         )}
       </div>
@@ -118,10 +131,17 @@ export const TerminalView: React.FC<Props> = ({ tab }) => {
             <ShieldCheck className="h-3.5 w-3.5" />
             <span>{transportName}</span>
           </span>
-          <span className="flex items-center gap-1 text-slate-500">
-            <Cpu className="h-3.5 w-3.5 text-emerald-400" />
-            <span>xterm.js WebGL Engine</span>
-          </span>
+
+          {/* Renderer Toggle Switch */}
+          <button
+            onClick={handleRendererToggle}
+            title="点击切换硬件加速模式 (WebGL 模式 vs Canvas 极速低延迟模式)"
+            className="flex items-center gap-1 text-slate-300 hover:text-cyan-300 transition-colors"
+          >
+            <Cpu className={`h-3.5 w-3.5 ${useWebGL ? 'text-emerald-400' : 'text-amber-400'}`} />
+            <span>{useWebGL ? 'WebGL 加速' : 'Canvas 极速 2D'}</span>
+          </button>
+
           <span className="hidden sm:inline text-slate-500">
             已连接: {connectedTime}
           </span>

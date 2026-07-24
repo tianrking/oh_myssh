@@ -85,11 +85,14 @@ export const TERMINAL_THEMES: Record<string, ITerminalOptions['theme']> = {
 export class TerminalEngine {
   public terminal: Terminal;
   public fitAddon: FitAddon;
+  private webglAddon: WebglAddon | null = null;
   private stream: DuplexByteStream | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private isConnected = false;
   private logBuffer: string[] = [];
+  private isComposing = false;
+  private containerElement: HTMLElement | null = null;
 
   constructor(themeName: string = 'cyberpunk', scrollback: number = 10000) {
     this.terminal = new Terminal({
@@ -99,9 +102,11 @@ export class TerminalEngine {
       fontFamily: "'Fira Code', ui-monospace, Menlo, Monaco, Consolas, monospace",
       theme: TERMINAL_THEMES[themeName] || TERMINAL_THEMES.cyberpunk,
       allowProposedApi: true,
-      smoothScrollDuration: 0, // 极速响应，消灭动画卡顿
+      smoothScrollDuration: 0, // 消除滚动延迟
       macOptionIsMeta: true,
       scrollback: scrollback,
+      rightClickSelectsWord: true,
+      fastScrollModifier: 'alt',
     });
 
     this.fitAddon = new FitAddon();
@@ -109,22 +114,65 @@ export class TerminalEngine {
   }
 
   public mount(container: HTMLElement) {
+    this.containerElement = container;
     this.terminal.open(container);
     
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
-      });
-      this.terminal.loadAddon(webglAddon);
-    } catch (e) {
-      console.warn('WebGL addon 加载失败，回退至 Canvas 渲染器', e);
-    }
+    // 自动挂载 WebGL 加速，失败时优雅降级 2D Canvas
+    this.enableWebGL();
+
+    // 绑定 macOS 输入法 IME 合成事件与 DOM 点击 Focus 抢占
+    this.bindInputOptimizations(container);
 
     setTimeout(() => {
       this.fitAddon.fit();
       this.terminal.focus();
-    }, 50);
+    }, 30);
+  }
+
+  public enableWebGL(): boolean {
+    try {
+      if (!this.webglAddon) {
+        this.webglAddon = new WebglAddon();
+        this.webglAddon.onContextLoss(() => {
+          this.disableWebGL();
+        });
+        this.terminal.loadAddon(this.webglAddon);
+      }
+      return true;
+    } catch (e) {
+      console.warn('WebGL 加载受限，回退至 Canvas 极速绘制模式', e);
+      this.disableWebGL();
+      return false;
+    }
+  }
+
+  public disableWebGL() {
+    if (this.webglAddon) {
+      try {
+        this.webglAddon.dispose();
+      } catch (e) {}
+      this.webglAddon = null;
+    }
+  }
+
+  private bindInputOptimizations(container: HTMLElement) {
+    // 监听容器点击强行抢占 Focus，保障打字输入零卡顿
+    container.addEventListener('click', () => {
+      this.terminal.focus();
+    });
+
+    // 监听隐藏 textarea 的 macOS 输入法 Composition 事件
+    setTimeout(() => {
+      const helperTextarea = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement;
+      if (helperTextarea) {
+        helperTextarea.addEventListener('compositionstart', () => {
+          this.isComposing = true;
+        });
+        helperTextarea.addEventListener('compositionend', () => {
+          this.isComposing = false;
+        });
+      }
+    }, 100);
   }
 
   public attachStream(stream: DuplexByteStream) {
@@ -134,7 +182,7 @@ export class TerminalEngine {
     this.reader = stream.readable.getReader();
     this.writer = stream.writable.getWriter();
 
-    // 监听键盘输入数据，直接毫秒级写出
+    // 监听键盘输入数据，毫秒级直接送达传输管道
     this.terminal.onData((data) => {
       if (this.writer && this.isConnected) {
         const encoder = new TextEncoder();
@@ -192,6 +240,7 @@ export class TerminalEngine {
 
   public dispose() {
     this.isConnected = false;
+    this.disableWebGL();
     if (this.reader) {
       this.reader.cancel().catch(() => {});
     }
