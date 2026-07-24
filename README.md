@@ -1,108 +1,81 @@
 # Oh My SSH
 
-> **用户只打开网页，本机不下载、不安装任何东西。**  
-> 在浏览器里填 IP + 密码，像 WebSSH / Xshell 一样管理远程 VPS。
-
-```text
-  用户电脑
-  ────────
-  只开浏览器访问 https://你的站点
-           │
-           │  HTTPS + WebSocket（网页自带）
-           ▼
-  你部署的 Oh My SSH 服务器（一台即可）
-  ─ 网页 UI
-  ─ WebSSH 网关（替用户拨 TCP/22）
-           │
-           ▼
-      用户的 VPS
-```
-
-**最终用户：零下载、零安装、零命令行。**  
-需要部署的是**站点运营方**（你自己的服务器 / Docker / 云主机），不是每个用户。
+> **纯前端静态站**：`npm run build` → 托管 **Vercel**（或任意静态 CDN）。  
+> 用户、运营方都**不必**为了打开 UI 去跑 Node 网关。
 
 ---
 
-## 用户怎么用（无需下载）
-
-1. 打开你提供的网址  
-2. 点「快速连接」  
-3. 输入 `root@1.2.3.4:22` 和密码  
-4. 在浏览器里操作远程 Shell  
-
----
-
-## 运营方怎么部署（一次性）
-
-### 方式 A：一条命令（推荐）
+## 你要的部署方式（可以）
 
 ```bash
-git clone https://github.com/tianrking/oh_myssh.git
-cd oh_myssh
 npm install
 npm run build
-npm start
-# 浏览器打开 http://服务器IP:8080
+# 把 dist/ 丢到 Vercel —— Framework: Vite, Output: dist
 ```
 
-`npm start` = **网页 + WebSSH 网关** 一体服务，用户只访问这个地址。
+或连接 GitHub 仓库一键 Import。已提供 [`vercel.json`](./vercel.json)。
 
-### 方式 B：Docker
+**最终用户**：只打开网址，不下载客户端。  
+**你**：只托管静态文件，**可以不跑任何自建 SSH 服务**。
 
-```bash
-docker compose up -d --build
-# http://服务器IP:8080
+---
+
+## 必须先说清楚的硬限制
+
+| 目标 | 纯 Vercel 静态（只前端） |
+|------|---------------------------|
+| 打开精美终端 UI、多标签、主机库、命令片段 | ✅ 可以 |
+| 离线演示 Shell | ✅ 可以 |
+| **对任意 IP:22 做真实 SSH** | ❌ **不行** |
+
+**为什么网上那些 WebSSH 可以？**  
+因为它们**不是纯静态**：背后有服务器用 Node/Go 去 `connect(你的IP, 22)`。  
+浏览器**禁止**普通网页自己去连 TCP/22——这是浏览器安全模型，不是 Vercel 的锅，也不是我们「懒得做」。
+
+所以在「**只编译前端 + 只托管 Vercel + 我们也不跑服务**」三条同时成立时：
+
+- ✅ 产品形态 = 纯静态 SPA  
+- ❌ 不能 magically 变成「网页直连任意 VPS」  
+- 若坚持真实 SSH → 必须有人提供能拨 TCP 的服务（自建网关 / 第三方 / 特殊浏览器 Direct Sockets）
+
+```text
+纯静态 Vercel：
+  浏览器 ──❌ 不能──►  任意 VPS:22
+
+常见 WebSSH：
+  浏览器 ──WebSocket──►  网站服务器 ──TCP──►  VPS:22
+                         （这一段你说不要）
 ```
 
-### 方式 C：开发机自己用
+---
+
+## 本地开发
 
 ```bash
 npm install
-npm run dev    # http://localhost:3000  （同样是网页，不是让最终用户装东西）
+npm run dev      # 仅前端 http://localhost:3000
+npm test
+npm run build
+```
+
+可选（**不是** Vercel 纯静态路径；只有你需要真实 SSH 实验时）：
+
+```bash
+npm run dev:with-gateway   # 前端 + 可选本机网关
+npm start                  # 一体服务（需先 build）
 ```
 
 ---
 
-## 和「本地要跑东西」的区别
+## 纯静态上能用什么
 
-| 角色 | 要不要下载/安装 |
-|------|------------------|
-| **最终用户** | **不要**。只开浏览器 |
-| **你（部署站点的人）** | 在**服务器上**跑 `npm start` 或 Docker 一次 |
+- xterm 终端 UI、主题、分屏、多标签  
+- 主机列表（IndexedDB）  
+- 命令片段 / 命令面板  
+- **离线 Shell**（本地模拟，不连真机）  
+- 快速连接表单（真连会说明限制）
 
-这和 [webssh2](https://github.com/billchurch/webssh2) 等产品一样：  
-网站背后有服务帮你 SSH；用户侧永远只是网页。
-
----
-
-## 环境变量
-
-| 变量 | 说明 |
-|------|------|
-| `PORT` | 一体服务端口，默认 `8080` |
-| `OMS_GATEWAY_PORT` | 仅网关模式端口，默认 `3922` |
-| `VITE_SSH_GATEWAY` | 构建前端时指定外网网关 `wss://...`（一般同域可不设） |
-
----
-
-## 脚本
-
-| 命令 | 说明 |
-|------|------|
-| `npm run build && npm start` | **生产：用户只开网址** |
-| `npm run dev` | 本地开发 |
-| `npm run gateway` | 只跑网关 |
-| `npm test` | 单元测试 |
-| `npm run test:webssh` | 网关 E2E |
-
----
-
-## 安全（公网必读）
-
-- 密码会经过**你部署的服务器**再连到目标 VPS（所有 WebSSH 皆如此）  
-- 公网请上 HTTPS（Nginx/Caddy 反代）  
-- 建议限制来源 IP、加登录墙、勿裸奔在公网  
-- 不要把密码提交到 Git  
+侧边栏 **「离线开发 Shell」** 可完整体验交互终端。
 
 ---
 

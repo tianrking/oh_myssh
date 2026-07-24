@@ -124,8 +124,12 @@ export const TerminalView: React.FC<Props> = ({
         engine1.terminal.writeln(` ${line}`);
       }
       engine1.terminal.writeln('');
-      engine1.terminal.writeln(' \x1b[36m提示\x1b[0m  打开网页 → 快速连接填 host + 密码（经典 WebSSH）。');
-      engine1.terminal.writeln('       请先启动：\x1b[1mnpm run dev\x1b[0m（UI + 网关），或单独 \x1b[1mnpm run gateway\x1b[0m');
+      engine1.terminal.writeln(
+        ' \x1b[36m说明\x1b[0m  纯 Vercel 静态站 = 只有前端。真实 SSH 需要「有人」能拨 TCP。'
+      );
+      engine1.terminal.writeln(
+        '       可先用侧边栏 \x1b[1m离线开发 Shell\x1b[0m 体验终端 UI。'
+      );
       engine1.terminal.writeln('');
     };
 

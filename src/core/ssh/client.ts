@@ -1,7 +1,12 @@
 /**
- * SSH connection facade.
- * Default product path = classic WebSSH gateway (open webpage → manage VPS).
- * Fallbacks: DirectSockets / optional browser SSH stack (advanced).
+ * SSH connect for pure-static frontend (Vercel-friendly).
+ *
+ * Reality check:
+ * - A normal webpage cannot open raw TCP/22 to arbitrary IPs (browser security).
+ * - Sites that "just open and SSH" always have a backend somewhere.
+ * - Pure Vercel static: UI + offline shell + local vault only, unless:
+ *   (1) browser has Direct Sockets (rare / IWA), or
+ *   (2) you set VITE_SSH_GATEWAY / advanced bridge URL (someone else's server).
  */
 import { Buffer } from 'buffer';
 import {
@@ -25,7 +30,7 @@ import {
   type DuplexByteStream,
 } from '../socket/transport';
 import { SftpClient, type SftpEntry } from './sftp-client';
-import { connectViaWebSshGateway, resolveGatewayWsUrl } from './gateway-client';
+import { connectViaWebSshGateway } from './gateway-client';
 
 export type SshAuthConfig = {
   username: string;
@@ -37,11 +42,8 @@ export type SshConnectOptions = {
   host: string;
   port: number;
   auth: SshAuthConfig;
-  /** Optional explicit gateway WebSocket URL (defaults to same-origin /ssh-ws) */
+  /** Optional WebSSH gateway WebSocket URL (NOT provided by pure Vercel static) */
   gatewayUrl?: string;
-  /** Skip gateway and try browser-side transports only */
-  preferBrowserDirect?: boolean;
-  /** Advanced: raw TCP bridge URL (not default) */
   relayUrl?: string;
   cols?: number;
   rows?: number;
@@ -55,7 +57,6 @@ export type SshShellSession = {
   close: () => Promise<void>;
   stream: DuplexByteStream;
   openSftp: () => Promise<SftpClient>;
-  /** Present only for in-browser SSH stack */
   session?: SshClientSession;
 };
 
@@ -63,66 +64,98 @@ function status(opts: SshConnectOptions, msg: string) {
   opts.onStatus?.(msg);
 }
 
+function envGateway(): string {
+  try {
+    const env = (import.meta as ImportMeta & { env?: Record<string, string> }).env;
+    return (env?.VITE_SSH_GATEWAY || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+const PURE_STATIC_SSH_ERROR = [
+  '纯静态前端（例如只托管在 Vercel）无法对任意 IP 建立真实 SSH。',
+  '',
+  '原因：浏览器禁止普通网页直接打开 TCP/22。',
+  '网上那些「打开网页就能 SSH」的站点，背后都有服务器帮你拨号。',
+  '',
+  '在「只编译前端、托管 Vercel、我们也不跑服务」的前提下，',
+  '本应用可以提供：终端 UI、主机库、离线 Shell、命令片段等。',
+  '不能提供：不经过任何服务器就连你的 VPS。',
+  '',
+  '可选（都需要「有人」跑服务，不是纯静态）：',
+  '· 自行部署可选网关并设置 VITE_SSH_GATEWAY=wss://...',
+  '· 使用支持 Direct Sockets 的特殊浏览器环境 (IWA)',
+].join('\n');
+
 /**
- * Default: WebSSH gateway (browser opens page → gateway dials SSH).
- * Optional: DirectSockets / in-browser SSH if gateway unavailable and user opts in.
+ * Connect SSH shell.
+ * Order: explicit gateway env → DirectSockets → optional relay → clear pure-static error.
  */
 export async function connectSshShell(opts: SshConnectOptions): Promise<SshShellSession> {
   const { host, port, auth } = opts;
+  const gateway =
+    (opts.gatewayUrl && opts.gatewayUrl.trim()) ||
+    envGateway() ||
+    '';
 
-  // ——— Primary: classic WebSSH gateway ———
-  if (!opts.preferBrowserDirect) {
-    try {
-      status(opts, `WebSSH · ${auth.username}@${host}:${port}`);
-      const gw = await connectViaWebSshGateway({
-        host,
-        port,
-        username: auth.username,
-        password: auth.password,
-        privateKey: auth.privateKeyPem,
-        cols: opts.cols,
-        rows: opts.rows,
-        gatewayUrl: opts.gatewayUrl,
-        onStatus: opts.onStatus,
-      });
-
-      return {
-        mode: 'webssh-gateway',
-        stream: gw.stream,
-        write: gw.write,
-        resize: gw.resize,
-        close: gw.close,
-        openSftp: async () => {
-          throw new Error(
-            'SFTP via gateway: 请新开 SFTP 标签（将建立独立 SSH 会话）。完整多路复用后续版本支持。'
-          );
-        },
-      };
-    } catch (e) {
-      // If user forced no fallback, rethrow
-      const msg = e instanceof Error ? e.message : String(e);
-      status(opts, `Gateway failed: ${msg}`);
-      // Fall through only when DirectSockets or explicit relay available
-      if (!hasDirectSockets() && !(opts.relayUrl && opts.relayUrl.trim())) {
-        throw new Error(
-          [
-            msg,
-            '',
-            'WebSSH 需要网关进程（像所有在线 WebSSH 一样）：',
-            '  本地：npm run dev   （会同时启动 UI + 网关）',
-            '  或单独：npm run gateway',
-            '',
-            `当前网关地址：${resolveGatewayWsUrl(opts.gatewayUrl)}`,
-          ].join('\n')
-        );
-      }
-      status(opts, 'Falling back to browser direct transport…');
-    }
+  // 1) Optional external WebSSH gateway — only if YOU configured one (not pure Vercel)
+  if (gateway) {
+    status(opts, `Gateway · ${auth.username}@${host}:${port}`);
+    const gw = await connectViaWebSshGateway({
+      host,
+      port,
+      username: auth.username,
+      password: auth.password,
+      privateKey: auth.privateKeyPem,
+      cols: opts.cols,
+      rows: opts.rows,
+      gatewayUrl: gateway,
+      onStatus: opts.onStatus,
+    });
+    return {
+      mode: 'webssh-gateway',
+      stream: gw.stream,
+      write: gw.write,
+      resize: gw.resize,
+      close: gw.close,
+      openSftp: async () => {
+        throw new Error('SFTP over external gateway is not enabled in pure-static mode');
+      },
+    };
   }
 
-  // ——— Fallback: browser DirectSockets / optional raw bridge + in-browser SSH2 ———
-  const { stream, mode } = await openBrowserTransport(host, port, opts.relayUrl);
-  status(opts, `Transport ${mode}, SSH handshake…`);
+  // 2) True browser Direct Sockets (rare; not normal Vercel Chrome)
+  if (hasDirectSockets()) {
+    status(opts, `Direct TCP · ${auth.username}@${host}:${port}`);
+    return connectBrowserSsh(opts, await openDirectStream(host, port), 'direct');
+  }
+
+  // 3) Optional raw TCP bridge URL from advanced settings
+  if (opts.relayUrl && opts.relayUrl.trim()) {
+    status(opts, `Bridge · ${host}:${port}`);
+    const url = buildRelayUrl(opts.relayUrl.trim(), host, port);
+    const stream = await openWebSocketSshStream(url);
+    return connectBrowserSsh(opts, stream, 'optional-bridge');
+  }
+
+  // 4) Pure static: impossible
+  throw new Error(PURE_STATIC_SSH_ERROR);
+}
+
+async function openDirectStream(host: string, port: number): Promise<Stream> {
+  const tcp = new DirectSocketsTransport();
+  const duplex = await tcp.connect(host, port);
+  return new WebStreamsSshAdapter(duplex);
+}
+
+async function connectBrowserSsh(
+  opts: SshConnectOptions,
+  stream: Stream,
+  mode: 'direct' | 'optional-bridge'
+): Promise<SshShellSession> {
+  const { auth } = opts;
+  status(opts, 'SSH handshake…');
 
   const config = new SshSessionConfiguration();
   const session = new SshClientSession(config);
@@ -139,7 +172,9 @@ export async function connectSshShell(opts: SshConnectOptions): Promise<SshShell
   };
   const authed = await session.authenticate(credentials);
   if (!authed) {
-    await session.close(SshDisconnectReason.noMoreAuthMethodsAvailable, 'auth failed').catch(() => {});
+    await session
+      .close(SshDisconnectReason.noMoreAuthMethodsAvailable, 'auth failed')
+      .catch(() => {});
     throw new Error('SSH 认证失败：用户名或密码错误');
   }
 
@@ -241,23 +276,6 @@ export async function connectSshShell(opts: SshConnectOptions): Promise<SshShell
   };
 }
 
-async function openBrowserTransport(
-  host: string,
-  port: number,
-  relayUrl?: string
-): Promise<{ stream: Stream; mode: 'direct' | 'optional-bridge' }> {
-  if (hasDirectSockets()) {
-    const tcp = new DirectSocketsTransport();
-    const duplex = await tcp.connect(host, port);
-    return { stream: new WebStreamsSshAdapter(duplex), mode: 'direct' };
-  }
-  if (relayUrl && relayUrl.trim()) {
-    const url = buildRelayUrl(relayUrl.trim(), host, port);
-    return { stream: await openWebSocketSshStream(url), mode: 'optional-bridge' };
-  }
-  throw new Error('No browser direct transport available');
-}
-
 class SubsystemRequestMessage extends ChannelRequestMessage {
   constructor(private subsystem: string) {
     super('subsystem', true);
@@ -275,4 +293,3 @@ class SubsystemRequestMessage extends ChannelRequestMessage {
 }
 
 export type { SftpEntry };
-export { resolveGatewayWsUrl } from './gateway-client';

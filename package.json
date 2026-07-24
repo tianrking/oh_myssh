@@ -4,12 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n gateway,web -c cyan,magenta \"npm run gateway\" \"vite\"",
-    "gateway": "node server/gateway.mjs",
+    "dev": "vite",
     "build": "tsc && vite build",
-    "start": "node server/prod.mjs",
-    "preview": "concurrently -k -n gateway,web -c cyan,magenta \"npm run gateway\" \"vite preview\"",
+    "preview": "vite preview",
     "test": "vitest run",
+    "gateway": "node server/gateway.mjs",
+    "dev:with-gateway": "concurrently -k -n gateway,web -c cyan,magenta \"npm run gateway\" \"vite\"",
+    "start": "node server/prod.mjs",
     "test:ssh": "node scripts/e2e-ssh-check.mjs",
     "test:webssh": "node scripts/e2e-webssh-check.mjs"
   },

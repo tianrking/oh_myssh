@@ -145,11 +145,11 @@ export const HeaderNavbar: React.FC<Props> = ({
 
         {/* DirectSockets Runtime Indicator */}
         <div
-          title="WebSSH：打开网页即可连接远程 VPS（经网关拨号 SSH）"
+          title="纯前端静态站 · 可托管 Vercel · 真实 SSH 需浏览器 Direct Sockets 或可选外部网关"
           className="hidden lg:flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-1 text-[11px] font-mono"
         >
-          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-emerald-300">WebSSH</span>
+          <span className="h-2 w-2 rounded-full bg-cyan-400" />
+          <span className="text-cyan-300">Static SPA</span>
         </div>
 
         {/* Quick Connect Button */}
