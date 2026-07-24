@@ -1,0 +1,16 @@
+{
+  "name": "Oh My SSH",
+  "short_name": "OhMySSH",
+  "description": "本地优先、纯前端 WebSSH & SFTP 桌面工作区",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#06b6d4",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}
