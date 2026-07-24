@@ -7,6 +7,7 @@
     "dev": "concurrently -k -n gateway,web -c cyan,magenta \"npm run gateway\" \"vite\"",
     "gateway": "node server/gateway.mjs",
     "build": "tsc && vite build",
+    "start": "node server/prod.mjs",
     "preview": "concurrently -k -n gateway,web -c cyan,magenta \"npm run gateway\" \"vite preview\"",
     "test": "vitest run",
     "test:ssh": "node scripts/e2e-ssh-check.mjs",

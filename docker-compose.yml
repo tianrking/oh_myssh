@@ -1,0 +1,9 @@
+# One command deploy for operators. End users only open the URL.
+services:
+  ohmyssh:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+    restart: unless-stopped

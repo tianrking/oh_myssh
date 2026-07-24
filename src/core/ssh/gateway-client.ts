@@ -25,7 +25,14 @@ export type GatewaySession = {
   close: () => Promise<void>;
 };
 
-/** Resolve WebSocket URL for the WebSSH gateway (default: same-origin /ssh-ws). */
+/**
+ * Resolve WebSocket URL for the WebSSH gateway.
+ * Same-origin by default so end users only open the website — zero local install.
+ *
+ * - Production all-in-one (`npm start`):  /ssh  and /ssh-ws
+ * - Vite dev (`npm run dev`):            /ssh-ws proxied to local gateway
+ * - Override: VITE_SSH_GATEWAY or explicit argument
+ */
 export function resolveGatewayWsUrl(override?: string): string {
   if (override && override.trim()) {
     return override.trim();
@@ -42,7 +49,7 @@ export function resolveGatewayWsUrl(override?: string): string {
     return 'ws://127.0.0.1:3922/ssh';
   }
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  // Vite dev proxies /ssh-ws → gateway /ssh
+  // Prefer /ssh-ws (works in dev proxy + prod all-in-one)
   return `${proto}//${window.location.host}/ssh-ws`;
 }
 
