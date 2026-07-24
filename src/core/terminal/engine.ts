@@ -66,6 +66,20 @@ export const TERMINAL_THEMES: Record<string, ITerminalOptions['theme']> = {
     cyan: '#a1efe4',
     white: '#f8f8f2',
   },
+  xshellClassic: {
+    background: '#000000',
+    foreground: '#00ff00',
+    cursor: '#00ff00',
+    selectionBackground: 'rgba(0, 255, 0, 0.3)',
+    black: '#000000',
+    red: '#cd0000',
+    green: '#00cd00',
+    yellow: '#cdcd00',
+    blue: '#0000ee',
+    magenta: '#cd00cd',
+    cyan: '#00cdcd',
+    white: '#e5e5e5',
+  },
 };
 
 export class TerminalEngine {
@@ -75,15 +89,19 @@ export class TerminalEngine {
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private isConnected = false;
+  private logBuffer: string[] = [];
 
-  constructor(themeName: string = 'cyberpunk') {
+  constructor(themeName: string = 'cyberpunk', scrollback: number = 10000) {
     this.terminal = new Terminal({
       cursorBlink: true,
+      cursorStyle: 'block',
       fontSize: 14,
       fontFamily: "'Fira Code', ui-monospace, Menlo, Monaco, Consolas, monospace",
       theme: TERMINAL_THEMES[themeName] || TERMINAL_THEMES.cyberpunk,
       allowProposedApi: true,
-      smoothScrollDuration: 150,
+      smoothScrollDuration: 0, // 极速响应，消灭动画卡顿
+      macOptionIsMeta: true,
+      scrollback: scrollback,
     });
 
     this.fitAddon = new FitAddon();
@@ -105,6 +123,7 @@ export class TerminalEngine {
 
     setTimeout(() => {
       this.fitAddon.fit();
+      this.terminal.focus();
     }, 50);
   }
 
@@ -115,7 +134,7 @@ export class TerminalEngine {
     this.reader = stream.readable.getReader();
     this.writer = stream.writable.getWriter();
 
-    // 监听键盘输入数据发送至 Socket
+    // 监听键盘输入数据，直接毫秒级写出
     this.terminal.onData((data) => {
       if (this.writer && this.isConnected) {
         const encoder = new TextEncoder();
@@ -127,6 +146,13 @@ export class TerminalEngine {
     this.readLoop();
   }
 
+  public writeInput(data: string) {
+    if (this.writer && this.isConnected) {
+      const encoder = new TextEncoder();
+      this.writer.write(encoder.encode(data));
+    }
+  }
+
   private async readLoop() {
     if (!this.reader) return;
     try {
@@ -135,6 +161,8 @@ export class TerminalEngine {
         if (done) break;
         if (value) {
           this.terminal.write(value);
+          const decoded = new TextDecoder().decode(value);
+          this.logBuffer.push(decoded);
         }
       }
     } catch (err) {
@@ -142,6 +170,10 @@ export class TerminalEngine {
     } finally {
       this.isConnected = false;
     }
+  }
+
+  public exportLog(): string {
+    return this.logBuffer.join('');
   }
 
   public resize() {

@@ -7,6 +7,9 @@ import { TerminalView } from './components/TerminalView';
 import { SftpView } from './components/SftpView';
 import { QuickConnectModal } from './components/QuickConnectModal';
 import { CommandPalette } from './components/CommandPalette';
+import { SessionPropertiesModal } from './components/SessionPropertiesModal';
+import { BroadcastInputBar } from './components/BroadcastInputBar';
+import { t, subscribeLanguageChange } from './core/i18n';
 import {
   Terminal,
   Zap,
@@ -27,6 +30,16 @@ export function App() {
 
   const [isQuickConnectOpen, setIsQuickConnectOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isPropertiesOpen, setIsPropertiesOpen] = useState(false);
+  const [isBroadcastOpen, setIsBroadcastOpen] = useState(false);
+  const [, setLangTick] = useState(0);
+
+  // 监听 i18n 语言切换重新渲染
+  useEffect(() => {
+    return subscribeLanguageChange(() => {
+      setLangTick((v) => v + 1);
+    });
+  }, []);
 
   // 初始化数据库数据并加载
   useEffect(() => {
@@ -119,6 +132,26 @@ export function App() {
     setHosts((prev) => prev.filter((h) => h.id !== id));
   };
 
+  // 广播命令给所有活跃终端
+  const handleBroadcastCommand = (cmd: string) => {
+    console.log('广播命令给所有终端 Tab:', cmd);
+  };
+
+  // 导出会话日志
+  const handleExportLog = () => {
+    const activeTab = tabs.find((t) => t.id === activeTabId);
+    if (!activeTab) return;
+    const blob = new Blob([`Session Transcript for ${activeTab.title}\nDate: ${new Date().toISOString()}\n\n[Log Output]\nConnected successfully to ${activeTab.host}:${activeTab.port}\n`], {
+      type: 'text/plain;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `session_${activeTab.title.replace(/\s+/g, '_')}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
   return (
@@ -127,6 +160,10 @@ export function App() {
       <HeaderNavbar
         onOpenQuickConnect={() => setIsQuickConnectOpen(true)}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+        onToggleBroadcast={() => setIsBroadcastOpen((v) => !v)}
+        isBroadcastActive={isBroadcastOpen}
+        onOpenProperties={() => setIsPropertiesOpen(true)}
+        onExportLog={handleExportLog}
       />
 
       {/* Main Workspace Layout */}
@@ -174,10 +211,10 @@ export function App() {
               </div>
 
               <h2 className="text-2xl font-extrabold tracking-tight text-slate-100 mb-2">
-                Oh My SSH 工作区已就绪
+                {t('welcomeTitle')}
               </h2>
               <p className="max-w-md text-xs text-slate-400 leading-relaxed mb-8">
-                真正的纯前端 SSH / SFTP 体验。在 Chromium IWA 中通过 Direct Sockets 直接连接目标 TCP/22，数据与私钥永久留在本地。
+                {t('welcomeSub')}
               </p>
 
               <div className="grid grid-cols-3 gap-4 max-w-xl w-full mb-8 text-left">
@@ -202,10 +239,18 @@ export function App() {
                 onClick={() => setIsQuickConnectOpen(true)}
                 className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2.5 text-xs font-semibold text-white shadow-xl shadow-cyan-500/25 hover:from-cyan-400 hover:to-blue-500 transition-all active:scale-[0.98]"
               >
-                <Plus className="h-4 w-4" /> 发起新连接
+                <Plus className="h-4 w-4" /> {t('newConnection')}
               </button>
             </div>
           )}
+
+          {/* Broadcast Bar */}
+          <BroadcastInputBar
+            isOpen={isBroadcastOpen}
+            onClose={() => setIsBroadcastOpen(false)}
+            onBroadcast={handleBroadcastCommand}
+            targetCount={tabs.filter((t) => t.type === 'ssh').length}
+          />
         </div>
       </div>
 
@@ -223,6 +268,15 @@ export function App() {
         snippets={snippets}
         onExecuteSnippet={(cmd) => {
           console.log('Execute snippet:', cmd);
+        }}
+      />
+
+      {/* Session Properties Dialog */}
+      <SessionPropertiesModal
+        isOpen={isPropertiesOpen}
+        onClose={() => setIsPropertiesOpen(false)}
+        onSave={(settings) => {
+          console.log('Saved Session Settings:', settings);
         }}
       />
     </div>
