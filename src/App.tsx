@@ -11,6 +11,7 @@ import { SessionPropertiesModal } from './components/SessionPropertiesModal';
 import { BroadcastInputBar } from './components/BroadcastInputBar';
 import { SnippetManagerModal } from './components/SnippetManagerModal';
 import { ThemeManagerModal } from './components/ThemeManagerModal';
+import { RelaySettingsModal } from './components/RelaySettingsModal';
 import { t, subscribeLanguageChange } from './core/i18n';
 import {
   Terminal,
@@ -36,6 +37,8 @@ export function App() {
   const [isBroadcastOpen, setIsBroadcastOpen] = useState(false);
   const [isSnippetManagerOpen, setIsSnippetManagerOpen] = useState(false);
   const [isThemeManagerOpen, setIsThemeManagerOpen] = useState(false);
+  const [isRelaySettingsOpen, setIsRelaySettingsOpen] = useState(false);
+  const [relayUrl, setRelayUrl] = useState('');
   const [currentTheme, setCurrentTheme] = useState('cyberpunk');
   const [, setLangTick] = useState(0);
 
@@ -169,6 +172,9 @@ export function App() {
         isBroadcastActive={isBroadcastOpen}
         onOpenProperties={() => setIsPropertiesOpen(true)}
         onExportLog={handleExportLog}
+        onOpenSnippetManager={() => setIsSnippetManagerOpen(true)}
+        onOpenThemeManager={() => setIsThemeManagerOpen(true)}
+        onOpenRelaySettings={() => setIsRelaySettingsOpen(true)}
       />
 
       {/* Main Workspace Layout */}
@@ -200,7 +206,7 @@ export function App() {
           {activeTab ? (
             <div className="flex-1 overflow-hidden">
               {activeTab.type === 'ssh' ? (
-                <TerminalView tab={activeTab} />
+                <TerminalView tab={activeTab} relayUrl={relayUrl} />
               ) : (
                 <SftpView tab={activeTab} />
               )}
@@ -302,6 +308,14 @@ export function App() {
         onClose={() => setIsThemeManagerOpen(false)}
         currentTheme={currentTheme}
         onSelectTheme={(t) => setCurrentTheme(t)}
+      />
+
+      {/* Relay Settings Dialog */}
+      <RelaySettingsModal
+        isOpen={isRelaySettingsOpen}
+        onClose={() => setIsRelaySettingsOpen(false)}
+        currentRelayUrl={relayUrl}
+        onSaveRelayUrl={(url) => setRelayUrl(url)}
       />
     </div>
   );

@@ -6,7 +6,8 @@ import {
   Globe,
   Radio,
   Settings,
-  Download
+  Download,
+  Network
 } from 'lucide-react';
 import { DirectSocketsTransport } from '../core/socket/transport';
 import { t, getLanguage, setLanguage, subscribeLanguageChange, type SupportedLanguage } from '../core/i18n';
@@ -20,6 +21,7 @@ interface Props {
   onExportLog: () => void;
   onOpenSnippetManager?: () => void;
   onOpenThemeManager?: () => void;
+  onOpenRelaySettings?: () => void;
 }
 
 export const HeaderNavbar: React.FC<Props> = ({
@@ -31,6 +33,7 @@ export const HeaderNavbar: React.FC<Props> = ({
   onExportLog,
   onOpenSnippetManager,
   onOpenThemeManager,
+  onOpenRelaySettings,
 }) => {
   const [hasDirectSockets, setHasDirectSockets] = useState<boolean | null>(null);
   const [lang, setLang] = useState<SupportedLanguage>(getLanguage());
@@ -83,6 +86,15 @@ export const HeaderNavbar: React.FC<Props> = ({
 
       {/* Right Capabilities & Actions */}
       <div className="flex items-center gap-2">
+        {/* Relay Settings button */}
+        <button
+          onClick={onOpenRelaySettings}
+          title="配置 WebSocket SSH Relay 中继代理"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800 bg-slate-900/60 text-slate-400 hover:border-cyan-500/30 hover:text-cyan-300 transition-all"
+        >
+          <Network className="h-4 w-4" />
+        </button>
+
         {/* Session Properties button */}
         <button
           onClick={onOpenProperties}

@@ -6,14 +6,15 @@ import {
   WebSocketRelayTransport,
   type SocketTransport
 } from '../core/socket/transport';
-import { Palette, RefreshCw, Cpu, Activity, ShieldCheck, Layers, Zap } from 'lucide-react';
+import { Palette, RefreshCw, Cpu, ShieldCheck, Network, AlertOctagon } from 'lucide-react';
 import type { TabItem } from './WorkspaceTabs';
 
 interface Props {
   tab: TabItem;
+  relayUrl?: string;
 }
 
-export const TerminalView: React.FC<Props> = ({ tab }) => {
+export const TerminalView: React.FC<Props> = ({ tab, relayUrl }) => {
   const containerRef1 = useRef<HTMLDivElement>(null);
   const containerRef2 = useRef<HTMLDivElement>(null);
   
@@ -21,7 +22,7 @@ export const TerminalView: React.FC<Props> = ({ tab }) => {
   const engineRef2 = useRef<TerminalEngine | null>(null);
 
   const [currentTheme, setCurrentTheme] = useState('cyberpunk');
-  const [transportName, setTransportName] = useState('Mock Interactive Shell');
+  const [transportName, setTransportName] = useState('Checking Network Capability...');
   const [connectedTime, setConnectedTime] = useState<string>('');
   const [useWebGL, setUseWebGL] = useState<boolean>(true);
 
@@ -36,21 +37,53 @@ export const TerminalView: React.FC<Props> = ({ tab }) => {
       engine1.mount(containerRef1.current);
     }
 
-    // 判断网络传输模式
-    let transport: SocketTransport = new MockSocketTransport();
-    if (typeof window !== 'undefined' && 'TCPSocket' in window) {
-      transport = new DirectSocketsTransport();
-    }
-    setTransportName(transport.name);
+    // 真实 SSH TCP 连接能力决策树
+    const probeAndConnect = async () => {
+      const hasDirectSockets = typeof window !== 'undefined' && 'TCPSocket' in window;
 
-    // 连接 Socket
-    transport.connect(tab.host, tab.port).then((stream) => {
-      engine1.attachStream(stream);
-    }).catch((err) => {
-      console.warn('回退至 Mock 传输模式:', err);
-      const mock = new MockSocketTransport();
-      mock.connect(tab.host, tab.port).then((s) => engine1.attachStream(s));
-    });
+      let transport: SocketTransport;
+
+      if (hasDirectSockets) {
+        // 模式 A: Chromium IWA DirectSockets 原始 TCP 直连模式
+        transport = new DirectSocketsTransport();
+        setTransportName(transport.name);
+      } else if (relayUrl && relayUrl.trim().length > 0) {
+        // 模式 B: WebSocket Relay 中继真实 SSH 模式
+        transport = new WebSocketRelayTransport(relayUrl);
+        setTransportName(transport.name);
+      } else if (tab.host === '127.0.0.1' || tab.host.includes('internal.net') || tab.host === 'demo.server') {
+        // 模式 C: 明确的内置 Demo / 演示环境
+        transport = new MockSocketTransport();
+        setTransportName('Demo Mock Shell');
+      } else {
+        // 模式 D: 普通网页尝试连接真实外网 SSH，既无 DirectSockets 也无 Relay 的透明诊断报错
+        setTransportName('Direct TCP Unsupported');
+        const term = engine1.terminal;
+        term.writeln('\x1b[1;31m============================================================\x1b[0m');
+        term.writeln('\x1b[1;31m SSH CONNECT ERROR: Direct TCP/22 Not Supported in Web Page\x1b[0m');
+        term.writeln('\x1b[1;31m============================================================\x1b[0m');
+        term.writeln(``);
+        term.writeln(` \x1b[33m目标服务器\x1b[0m: ${tab.username}@${tab.host}:${tab.port}`);
+        term.writeln(` \x1b[33m拒绝原因\x1b[0m  : 浏览器 W3C 安全规范禁止普通网页直接发起原始 TCP 连接。`);
+        term.writeln(``);
+        term.writeln(` \x1b[1;32m要连接任意真实的外部 SSH 服务器，请选择以下任一解决方案：\x1b[0m`);
+        term.writeln(`   \x1b[36m1. Chromium IWA 模式\x1b[0m: 在支持 Direct Sockets 的 Chromium IWA 中启动包文件。`);
+        term.writeln(`   \x1b[36m2. 配置 WebSocket Relay\x1b[0m: 点击顶部 "Relay" 按钮配置自建网关（如 wss://your-relay/ssh）。`);
+        term.writeln(`   \x1b[36m3. 体验 Demo 环境\x1b[0m: 在侧边栏选择预置的“开发测试机”体验内置 Shell。`);
+        term.writeln(``);
+        term.writeln('\x1b[1;31m============================================================\x1b[0m');
+        return;
+      }
+
+      try {
+        const stream = await transport.connect(tab.host, tab.port);
+        engine1.attachStream(stream);
+      } catch (err: any) {
+        engine1.terminal.writeln(`\r\n\x1b[1;31mConnection Error:\x1b[0m ${err?.message || err}`);
+      }
+    };
+
+    probeAndConnect();
 
     // 窗口尺寸调整监听
     const handleResize = () => {
@@ -62,7 +95,7 @@ export const TerminalView: React.FC<Props> = ({ tab }) => {
       window.removeEventListener('resize', handleResize);
       engine1.dispose();
     };
-  }, [tab.id, tab.host, tab.port]);
+  }, [tab.id, tab.host, tab.port, relayUrl]);
 
   // 分屏终端 2
   useEffect(() => {
