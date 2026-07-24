@@ -4,11 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n gateway,web -c cyan,magenta \"npm run gateway\" \"vite\"",
+    "gateway": "node server/gateway.mjs",
     "build": "tsc && vite build",
-    "preview": "vite preview",
+    "preview": "concurrently -k -n gateway,web -c cyan,magenta \"npm run gateway\" \"vite preview\"",
     "test": "vitest run",
-    "test:ssh": "node scripts/e2e-ssh-check.mjs"
+    "test:ssh": "node scripts/e2e-ssh-check.mjs",
+    "test:webssh": "node scripts/e2e-webssh-check.mjs"
   },
   "dependencies": {
     "@microsoft/dev-tunnels-ssh": "^3.12.36",
@@ -17,10 +19,12 @@
     "@xterm/xterm": "^5.5.0",
     "buffer": "^6.0.3",
     "clsx": "^2.1.1",
+    "concurrently": "^10.0.3",
     "dexie": "^4.0.10",
     "lucide-react": "^0.475.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "ssh2": "^1.17.0",
     "tailwind-merge": "^3.0.1",
     "ws": "^8.21.1"
   },
@@ -29,6 +33,7 @@
     "@types/node": "^22.13.4",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
+    "@types/ssh2": "^1.15.5",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^29.1.1",

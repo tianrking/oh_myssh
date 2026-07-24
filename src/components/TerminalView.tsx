@@ -16,10 +16,12 @@ interface Props {
 
 function modeLabel(mode: string): string {
   switch (mode) {
+    case 'webssh-gateway':
+      return 'WebSSH Gateway';
     case 'direct':
       return 'SSH2 Direct';
     case 'optional-bridge':
-      return 'SSH2 (Advanced Bridge)';
+      return 'SSH2 (Advanced)';
     case 'offline':
       return 'Offline Shell';
     default:
@@ -122,8 +124,8 @@ export const TerminalView: React.FC<Props> = ({
         engine1.terminal.writeln(` ${line}`);
       }
       engine1.terminal.writeln('');
-      engine1.terminal.writeln(' \x1b[36m提示\x1b[0m  像 Xshell 一样使用：快速连接里填主机 + 密码。');
-      engine1.terminal.writeln('       本地请用 \x1b[1mnpm run dev\x1b[0m；生产真·直连需 Chromium IWA Direct Sockets。');
+      engine1.terminal.writeln(' \x1b[36m提示\x1b[0m  打开网页 → 快速连接填 host + 密码（经典 WebSSH）。');
+      engine1.terminal.writeln('       请先启动：\x1b[1mnpm run dev\x1b[0m（UI + 网关），或单独 \x1b[1mnpm run gateway\x1b[0m');
       engine1.terminal.writeln('');
     };
 
@@ -152,7 +154,7 @@ export const TerminalView: React.FC<Props> = ({
             password: tab.password,
             privateKeyPem: tab.privateKey,
           },
-          // Only pass if user explicitly configured advanced bridge
+          // Default: WebSSH gateway. Advanced raw bridge only if user set it.
           relayUrl: relayUrl?.trim() || undefined,
           cols: 120,
           rows: 40,
@@ -172,7 +174,13 @@ export const TerminalView: React.FC<Props> = ({
         setTransportName(modeLabel(ssh.mode));
         setStatus('connected');
         setStatusLine('');
-        register(ssh.mode === 'direct' ? 'direct' : 'relay');
+        register(
+          ssh.mode === 'webssh-gateway'
+            ? 'relay'
+            : ssh.mode === 'direct'
+              ? 'direct'
+              : 'relay'
+        );
 
         const fitResize = () => {
           try {

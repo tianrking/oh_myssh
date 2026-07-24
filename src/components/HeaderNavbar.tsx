@@ -145,21 +145,11 @@ export const HeaderNavbar: React.FC<Props> = ({
 
         {/* DirectSockets Runtime Indicator */}
         <div
-          title={
-            hasDirectSockets
-              ? 'Direct Sockets：可像 Xshell 一样直连 VPS'
-              : 'SSH2 客户端 · 默认直连 · 本地请 npm run dev'
-          }
+          title="WebSSH：打开网页即可连接远程 VPS（经网关拨号 SSH）"
           className="hidden lg:flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-1 text-[11px] font-mono"
         >
-          <span
-            className={`h-2 w-2 rounded-full ${
-              hasDirectSockets ? 'bg-emerald-400 animate-pulse' : 'bg-cyan-400'
-            }`}
-          />
-          <span className={hasDirectSockets ? 'text-emerald-300' : 'text-cyan-300'}>
-            {hasDirectSockets ? 'Direct TCP' : 'SSH2 Direct'}
-          </span>
+          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-emerald-300">WebSSH</span>
         </div>
 
         {/* Quick Connect Button */}

@@ -5,6 +5,7 @@ import path from 'path';
 import { createWsTcpRelayPlugin } from './scripts/vite-ws-tcp-relay';
 
 const empty = path.resolve(__dirname, 'src/shims/empty.js');
+const GATEWAY = process.env.OMS_GATEWAY_PORT || '3922';
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), createWsTcpRelayPlugin()],
@@ -12,8 +13,6 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
       buffer: 'buffer/',
-      // Node-only optional deps pulled by @microsoft/dev-tunnels-ssh
-      // Browser path uses WebCrypto; these never execute at runtime.
       'node-rsa': empty,
       stream: empty,
       crypto: empty,
@@ -39,7 +38,6 @@ export default defineConfig({
     },
     rollupOptions: {
       onwarn(warning, warn) {
-        // Suppress noisy unresolved optional Node deps
         if (warning.code === 'UNRESOLVED_IMPORT') return;
         warn(warning);
       },
@@ -48,8 +46,25 @@ export default defineConfig({
   server: {
     port: 3000,
     open: true,
+    proxy: {
+      // Browser → same origin /ssh-ws → WebSSH gateway
+      '/ssh-ws': {
+        target: `ws://127.0.0.1:${GATEWAY}`,
+        ws: true,
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/ssh-ws/, '/ssh'),
+      },
+    },
   },
   preview: {
     port: 4173,
+    proxy: {
+      '/ssh-ws': {
+        target: `ws://127.0.0.1:${GATEWAY}`,
+        ws: true,
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/ssh-ws/, '/ssh'),
+      },
+    },
   },
 });

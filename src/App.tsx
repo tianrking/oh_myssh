@@ -378,8 +378,8 @@ export function App() {
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                   <HardDrive className="h-5 w-5 text-purple-400 mb-2" />
-                  <h4 className="text-xs font-semibold text-slate-200">离线 Shell</h4>
-                  <p className="text-[11px] text-slate-500 mt-1">无网络也能完整开发体验</p>
+                  <h4 className="text-xs font-semibold text-slate-200">WebSSH</h4>
+                  <p className="text-[11px] text-slate-500 mt-1">打开网页即可连接远程 VPS</p>
                 </div>
               </div>
 

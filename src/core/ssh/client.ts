@@ -1,6 +1,7 @@
 /**
- * Pure-frontend real SSH2 client (WebCrypto) over any Stream transport.
- * Uses @microsoft/dev-tunnels-ssh — browser-compatible OpenSSH-compatible stack.
+ * SSH connection facade.
+ * Default product path = classic WebSSH gateway (open webpage → manage VPS).
+ * Fallbacks: DirectSockets / optional browser SSH stack (advanced).
  */
 import { Buffer } from 'buffer';
 import {
@@ -16,7 +17,6 @@ import { PtyRequestMessage, WindowChangeMessage } from './pty-message';
 import {
   WebStreamsSshAdapter,
   openWebSocketSshStream,
-  buildLocalRelayUrl,
   buildRelayUrl,
 } from './browser-stream';
 import {
@@ -25,6 +25,7 @@ import {
   type DuplexByteStream,
 } from '../socket/transport';
 import { SftpClient, type SftpEntry } from './sftp-client';
+import { connectViaWebSshGateway, resolveGatewayWsUrl } from './gateway-client';
 
 export type SshAuthConfig = {
   username: string;
@@ -36,10 +37,11 @@ export type SshConnectOptions = {
   host: string;
   port: number;
   auth: SshAuthConfig;
-  /**
-   * Optional advanced WebSocket→TCP bridge (NOT used by default).
-   * Only when user explicitly configures it in settings.
-   */
+  /** Optional explicit gateway WebSocket URL (defaults to same-origin /ssh-ws) */
+  gatewayUrl?: string;
+  /** Skip gateway and try browser-side transports only */
+  preferBrowserDirect?: boolean;
+  /** Advanced: raw TCP bridge URL (not default) */
   relayUrl?: string;
   cols?: number;
   rows?: number;
@@ -47,15 +49,14 @@ export type SshConnectOptions = {
 };
 
 export type SshShellSession = {
-  /** direct = real TCP (DirectSockets). optional-bridge = user opted-in advanced path */
-  mode: 'direct' | 'optional-bridge';
+  mode: 'webssh-gateway' | 'direct' | 'optional-bridge';
   write: (data: string | Uint8Array) => void;
   resize: (cols: number, rows: number) => void;
   close: () => Promise<void>;
-  /** Duplex for TerminalEngine.attachStream */
   stream: DuplexByteStream;
   openSftp: () => Promise<SftpClient>;
-  session: SshClientSession;
+  /** Present only for in-browser SSH stack */
+  session?: SshClientSession;
 };
 
 function status(opts: SshConnectOptions, msg: string) {
@@ -63,74 +64,68 @@ function status(opts: SshConnectOptions, msg: string) {
 }
 
 /**
- * Default product path: Direct TCP only (like Xshell → VPS).
- * Optional bridge URL is NEVER auto-selected — only when user set it.
- *
- * Browser security: normal web pages cannot open raw TCP/22.
- * Chromium Isolated Web App (Direct Sockets) enables true direct mode.
- * During local `npm run dev`, a transparent same-origin TCP bridge may exist
- * for developers; production builds never assume a middle hop.
- */
-export async function openTransportStream(
-  host: string,
-  port: number,
-  relayUrl?: string
-): Promise<{ stream: Stream; mode: SshShellSession['mode'] }> {
-  // 1) True direct TCP — product default when the browser allows it
-  if (hasDirectSockets()) {
-    const tcp = new DirectSocketsTransport();
-    const duplex = await tcp.connect(host, port);
-    return { stream: new WebStreamsSshAdapter(duplex), mode: 'direct' };
-  }
-
-  // 2) User-explicit optional bridge only (advanced settings — never default)
-  if (relayUrl && relayUrl.trim()) {
-    const url = buildRelayUrl(relayUrl.trim(), host, port);
-    return { stream: await openWebSocketSshStream(url), mode: 'optional-bridge' };
-  }
-
-  // 3) Local development convenience: if Vite TCP helper is present, use it
-  //    transparently so `npm run dev` can still hit real VPS (not a product default).
-  const isDev =
-    typeof import.meta !== 'undefined' &&
-    Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
-  if (typeof window !== 'undefined' && isDev) {
-    try {
-      const local = buildLocalRelayUrl(host, port);
-      const stream = await openWebSocketSshStream(local, 4000);
-      // Developer path still surfaces as "direct" UX; not product Relay.
-      return { stream, mode: 'direct' };
-    } catch {
-      // fall through to clear error
-    }
-  }
-
-  throw new Error(
-    [
-      '当前浏览器无法直接打开 TCP/22（W3C 安全限制，与 Xshell 桌面客户端不同）。',
-      '',
-      '可选方案：',
-      '1) 使用支持 Direct Sockets 的 Chromium IWA 安装包 → 真正直连 VPS',
-      '2) 本地开发：npm run dev 后即可连接真实主机',
-      '3) 高级：在设置中手动填写可选 TCP 桥（非默认，可不用）',
-    ].join('\n')
-  );
-}
-
-/**
- * Full SSH connect → password auth → PTY shell channel.
+ * Default: WebSSH gateway (browser opens page → gateway dials SSH).
+ * Optional: DirectSockets / in-browser SSH if gateway unavailable and user opts in.
  */
 export async function connectSshShell(opts: SshConnectOptions): Promise<SshShellSession> {
   const { host, port, auth } = opts;
-  status(opts, `Connecting ${auth.username}@${host}:${port}…`);
 
-  const { stream, mode } = await openTransportStream(host, port, opts.relayUrl);
-  status(opts, `Transport ready (${mode}), SSH handshake…`);
+  // ——— Primary: classic WebSSH gateway ———
+  if (!opts.preferBrowserDirect) {
+    try {
+      status(opts, `WebSSH · ${auth.username}@${host}:${port}`);
+      const gw = await connectViaWebSshGateway({
+        host,
+        port,
+        username: auth.username,
+        password: auth.password,
+        privateKey: auth.privateKeyPem,
+        cols: opts.cols,
+        rows: opts.rows,
+        gatewayUrl: opts.gatewayUrl,
+        onStatus: opts.onStatus,
+      });
+
+      return {
+        mode: 'webssh-gateway',
+        stream: gw.stream,
+        write: gw.write,
+        resize: gw.resize,
+        close: gw.close,
+        openSftp: async () => {
+          throw new Error(
+            'SFTP via gateway: 请新开 SFTP 标签（将建立独立 SSH 会话）。完整多路复用后续版本支持。'
+          );
+        },
+      };
+    } catch (e) {
+      // If user forced no fallback, rethrow
+      const msg = e instanceof Error ? e.message : String(e);
+      status(opts, `Gateway failed: ${msg}`);
+      // Fall through only when DirectSockets or explicit relay available
+      if (!hasDirectSockets() && !(opts.relayUrl && opts.relayUrl.trim())) {
+        throw new Error(
+          [
+            msg,
+            '',
+            'WebSSH 需要网关进程（像所有在线 WebSSH 一样）：',
+            '  本地：npm run dev   （会同时启动 UI + 网关）',
+            '  或单独：npm run gateway',
+            '',
+            `当前网关地址：${resolveGatewayWsUrl(opts.gatewayUrl)}`,
+          ].join('\n')
+        );
+      }
+      status(opts, 'Falling back to browser direct transport…');
+    }
+  }
+
+  // ——— Fallback: browser DirectSockets / optional raw bridge + in-browser SSH2 ———
+  const { stream, mode } = await openBrowserTransport(host, port, opts.relayUrl);
+  status(opts, `Transport ${mode}, SSH handshake…`);
 
   const config = new SshSessionConfiguration();
   const session = new SshClientSession(config);
-
-  // Accept server host key (fingerprint UI can be layered later)
   session.onAuthenticating((e) => {
     e.authenticationPromise = Promise.resolve({});
   });
@@ -142,25 +137,15 @@ export async function connectSshShell(opts: SshConnectOptions): Promise<SshShell
     username: auth.username,
     password: auth.password || undefined,
   };
-
-  // Note: full OpenSSH private key import needs extra key package;
-  // password auth is primary path and verified against real hosts.
-  if (!credentials.password && auth.privateKeyPem) {
-    status(opts, 'Private key provided — password-less key import is limited; try password if fails.');
-  }
-
   const authed = await session.authenticate(credentials);
   if (!authed) {
     await session.close(SshDisconnectReason.noMoreAuthMethodsAvailable, 'auth failed').catch(() => {});
     throw new Error('SSH 认证失败：用户名或密码错误');
   }
-  status(opts, 'Authenticated, opening shell…');
 
   const channel = await session.openChannel();
-
   const cols = opts.cols ?? 120;
   const rows = opts.rows ?? 40;
-
   const pty = new PtyRequestMessage();
   pty.term = 'xterm-256color';
   pty.widthChars = cols;
@@ -176,9 +161,8 @@ export async function connectSshShell(opts: SshConnectOptions): Promise<SshShell
     throw new Error('服务器拒绝 shell 请求');
   }
 
-  status(opts, `Shell open via ${mode}`);
+  status(opts, 'Shell open');
 
-  // Bridge channel ↔ Web Streams for TerminalEngine
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
   let closed = false;
 
@@ -227,46 +211,53 @@ export async function connectSshShell(opts: SshConnectOptions): Promise<SshShell
     },
   };
 
-  const resize = (c: number, r: number) => {
-    if (channel.isClosed) return;
-    const msg = new WindowChangeMessage();
-    msg.widthChars = c;
-    msg.heightRows = r;
-    msg.wantReply = false;
-    void channel.request(msg);
-  };
-
-  const openSftp = async () => {
-    const sftpChannel = await session.openChannel();
-    const sub = new ChannelRequestMessage('subsystem', true);
-    // subsystem request needs subsystem name in payload — use custom write
-    // Microsoft's ChannelRequestMessage only writes type+wantReply.
-    // Use raw request via subclass:
-    const subReq = new SubsystemRequestMessage('sftp');
-    const ok = await sftpChannel.request(subReq);
-    if (!ok) {
-      await sftpChannel.close().catch(() => {});
-      throw new Error('服务器拒绝 SFTP subsystem');
-    }
-    return new SftpClient(sftpChannel);
-  };
-
   return {
     mode,
     stream: duplex,
     write: (data) => {
-      const buf =
-        typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data);
+      const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data);
       void channel.send(buf);
     },
-    resize,
+    resize: (c, r) => {
+      if (channel.isClosed) return;
+      const msg = new WindowChangeMessage();
+      msg.widthChars = c;
+      msg.heightRows = r;
+      msg.wantReply = false;
+      void channel.request(msg);
+    },
     close: () => duplex.close(),
-    openSftp,
+    openSftp: async () => {
+      const sftpChannel = await session.openChannel();
+      const subReq = new SubsystemRequestMessage('sftp');
+      const ok = await sftpChannel.request(subReq);
+      if (!ok) {
+        await sftpChannel.close().catch(() => {});
+        throw new Error('服务器拒绝 SFTP subsystem');
+      }
+      return new SftpClient(sftpChannel);
+    },
     session,
   };
 }
 
-/** subsystem channel request */
+async function openBrowserTransport(
+  host: string,
+  port: number,
+  relayUrl?: string
+): Promise<{ stream: Stream; mode: 'direct' | 'optional-bridge' }> {
+  if (hasDirectSockets()) {
+    const tcp = new DirectSocketsTransport();
+    const duplex = await tcp.connect(host, port);
+    return { stream: new WebStreamsSshAdapter(duplex), mode: 'direct' };
+  }
+  if (relayUrl && relayUrl.trim()) {
+    const url = buildRelayUrl(relayUrl.trim(), host, port);
+    return { stream: await openWebSocketSshStream(url), mode: 'optional-bridge' };
+  }
+  throw new Error('No browser direct transport available');
+}
+
 class SubsystemRequestMessage extends ChannelRequestMessage {
   constructor(private subsystem: string) {
     super('subsystem', true);
@@ -284,3 +275,4 @@ class SubsystemRequestMessage extends ChannelRequestMessage {
 }
 
 export type { SftpEntry };
+export { resolveGatewayWsUrl } from './gateway-client';
