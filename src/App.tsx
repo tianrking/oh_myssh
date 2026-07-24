@@ -9,6 +9,8 @@ import { QuickConnectModal } from './components/QuickConnectModal';
 import { CommandPalette } from './components/CommandPalette';
 import { SessionPropertiesModal } from './components/SessionPropertiesModal';
 import { BroadcastInputBar } from './components/BroadcastInputBar';
+import { SnippetManagerModal } from './components/SnippetManagerModal';
+import { ThemeManagerModal } from './components/ThemeManagerModal';
 import { t, subscribeLanguageChange } from './core/i18n';
 import {
   Terminal,
@@ -32,6 +34,9 @@ export function App() {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isPropertiesOpen, setIsPropertiesOpen] = useState(false);
   const [isBroadcastOpen, setIsBroadcastOpen] = useState(false);
+  const [isSnippetManagerOpen, setIsSnippetManagerOpen] = useState(false);
+  const [isThemeManagerOpen, setIsThemeManagerOpen] = useState(false);
+  const [currentTheme, setCurrentTheme] = useState('cyberpunk');
   const [, setLangTick] = useState(0);
 
   // 监听 i18n 语言切换重新渲染
@@ -278,6 +283,25 @@ export function App() {
         onSave={(settings) => {
           console.log('Saved Session Settings:', settings);
         }}
+      />
+
+      {/* Snippet Manager Dialog */}
+      <SnippetManagerModal
+        isOpen={isSnippetManagerOpen}
+        onClose={() => setIsSnippetManagerOpen(false)}
+        snippets={snippets}
+        onSnippetsUpdated={async () => {
+          const allSnippets = await db.snippets.toArray();
+          setSnippets(allSnippets);
+        }}
+      />
+
+      {/* Theme Manager Dialog */}
+      <ThemeManagerModal
+        isOpen={isThemeManagerOpen}
+        onClose={() => setIsThemeManagerOpen(false)}
+        currentTheme={currentTheme}
+        onSelectTheme={(t) => setCurrentTheme(t)}
       />
     </div>
   );

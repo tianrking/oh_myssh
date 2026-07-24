@@ -18,6 +18,8 @@ interface Props {
   isBroadcastActive: boolean;
   onOpenProperties: () => void;
   onExportLog: () => void;
+  onOpenSnippetManager?: () => void;
+  onOpenThemeManager?: () => void;
 }
 
 export const HeaderNavbar: React.FC<Props> = ({
@@ -27,6 +29,8 @@ export const HeaderNavbar: React.FC<Props> = ({
   isBroadcastActive,
   onOpenProperties,
   onExportLog,
+  onOpenSnippetManager,
+  onOpenThemeManager,
 }) => {
   const [hasDirectSockets, setHasDirectSockets] = useState<boolean | null>(null);
   const [lang, setLang] = useState<SupportedLanguage>(getLanguage());
