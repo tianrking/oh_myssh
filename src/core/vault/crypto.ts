@@ -49,6 +49,15 @@ function base64ToBytes(base64: string): Uint8Array {
 }
 
 /**
+ * 确保 Uint8Array 准确转为标准的 0-offset ArrayBuffer，防止 subarray 切片偏移引发加解密失败
+ */
+function toArrayBuffer(buf: Uint8Array): ArrayBuffer {
+  const clean = new Uint8Array(buf.byteLength);
+  clean.set(buf);
+  return clean.buffer;
+}
+
+/**
  * 从主密码和 Salt 派生 AES-GCM CryptoKey
  */
 export async function deriveKey(
@@ -59,7 +68,7 @@ export async function deriveKey(
   const cryptoObj = typeof window !== 'undefined' ? window.crypto : globalThis.crypto;
   const keyMaterial = await cryptoObj.subtle.importKey(
     'raw',
-    textToBytes(masterPassword),
+    toArrayBuffer(textToBytes(masterPassword)),
     { name: 'PBKDF2' },
     false,
     ['deriveKey']
@@ -68,7 +77,7 @@ export async function deriveKey(
   return cryptoObj.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt,
+      salt: toArrayBuffer(salt),
       iterations,
       hash: 'SHA-256',
     },
@@ -94,10 +103,10 @@ export async function encryptSecret(
   const encryptedBuffer = await cryptoObj.subtle.encrypt(
     {
       name: 'AES-GCM',
-      iv,
+      iv: toArrayBuffer(iv),
     },
     key,
-    textToBytes(plaintext)
+    toArrayBuffer(textToBytes(plaintext))
   );
 
   // 打包 Payload: [16 字节 Salt] + [12 字节 IV] + [密文 Body]
@@ -131,10 +140,10 @@ export async function decryptSecret(
     const decryptedBuffer = await cryptoObj.subtle.decrypt(
       {
         name: 'AES-GCM',
-        iv,
+        iv: toArrayBuffer(iv),
       },
       key,
-      ciphertext
+      toArrayBuffer(ciphertext)
     );
 
     return bytesToText(new Uint8Array(decryptedBuffer));

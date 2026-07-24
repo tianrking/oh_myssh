@@ -36,7 +36,7 @@ export class OPFSEngine {
           const { done, value } = await reader.read();
           if (done) break;
           if (value) {
-            await writable.write(value);
+            await writable.write(value.buffer as ArrayBuffer);
             totalWritten += value.byteLength;
             if (onProgress) onProgress(totalWritten);
           }
