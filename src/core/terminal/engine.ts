@@ -1,6 +1,6 @@
 import { Terminal, type ITerminalOptions, type IDisposable } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
+import type { WebglAddon } from '@xterm/addon-webgl';
 import type { DuplexByteStream } from '../socket/transport';
 import { StreamFrameBatcher } from './batcher';
 
@@ -100,6 +100,9 @@ export class TerminalEngine {
   private dataDisposable: IDisposable | null = null;
   private batcher: StreamFrameBatcher | null = null;
   private readAbort = false;
+  private disposed = false;
+  private webglLoad: Promise<boolean> | null = null;
+  private readonly handleContainerClick = () => this.terminal.focus();
 
   constructor(themeName: string = 'cyberpunk', scrollback: number = 10000) {
     this.terminal = new Terminal({
@@ -126,7 +129,7 @@ export class TerminalEngine {
   public mount(container: HTMLElement) {
     this.containerElement = container;
     this.terminal.open(container);
-    this.enableWebGL();
+    void this.enableWebGL();
     this.bindInputOptimizations(container);
 
     // Fit after layout settles
@@ -136,21 +139,28 @@ export class TerminalEngine {
     });
   }
 
-  public enableWebGL(): boolean {
-    try {
-      if (!this.webglAddon) {
-        this.webglAddon = new WebglAddon();
-        this.webglAddon.onContextLoss(() => {
-          this.disableWebGL();
-        });
-        this.terminal.loadAddon(this.webglAddon);
-      }
-      return true;
-    } catch (e) {
-      console.warn('WebGL 加载受限，回退至 Canvas 极速绘制模式', e);
-      this.disableWebGL();
-      return false;
-    }
+  public enableWebGL(): Promise<boolean> {
+    if (this.webglAddon) return Promise.resolve(true);
+    if (this.webglLoad) return this.webglLoad;
+
+    this.webglLoad = import('@xterm/addon-webgl')
+      .then(({ WebglAddon: WebglAddonConstructor }) => {
+        if (this.disposed || this.webglAddon) return !this.disposed;
+        const addon = new WebglAddonConstructor();
+        addon.onContextLoss(() => this.disableWebGL());
+        this.terminal.loadAddon(addon);
+        this.webglAddon = addon;
+        return true;
+      })
+      .catch((error: unknown) => {
+        console.warn('WebGL 不可用，已回退到 Canvas 渲染。', error);
+        this.disableWebGL();
+        return false;
+      })
+      .finally(() => {
+        this.webglLoad = null;
+      });
+    return this.webglLoad;
   }
 
   public disableWebGL() {
@@ -165,9 +175,7 @@ export class TerminalEngine {
   }
 
   private bindInputOptimizations(container: HTMLElement) {
-    container.addEventListener('click', () => {
-      this.terminal.focus();
-    });
+    container.addEventListener('click', this.handleContainerClick);
 
     setTimeout(() => {
       const helperTextarea = container.querySelector(
@@ -302,6 +310,8 @@ export class TerminalEngine {
   }
 
   public dispose() {
+    this.disposed = true;
+    this.containerElement?.removeEventListener('click', this.handleContainerClick);
     this.detachStream();
     this.disableWebGL();
     this.terminal.dispose();

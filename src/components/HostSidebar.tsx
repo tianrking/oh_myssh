@@ -191,7 +191,7 @@ export const HostSidebar: React.FC<Props> = ({
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-1 text-emerald-400">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Vault 本地加密锁
+            凭据仅在当前会话
           </span>
           <span className="font-mono text-slate-500">{hosts.length} 项主机</span>
         </div>

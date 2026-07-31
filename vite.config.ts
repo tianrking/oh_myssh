@@ -5,17 +5,18 @@ import path from 'path';
 import { createWsTcpRelayPlugin } from './scripts/vite-ws-tcp-relay';
 
 const empty = path.resolve(__dirname, 'src/shims/empty.js');
-const GATEWAY = process.env.OMS_GATEWAY_PORT || '3922';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss(), createWsTcpRelayPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      buffer: 'buffer/',
+      ...(mode === 'test' ? {} : { buffer: 'buffer/' }),
+      events: 'events/',
       'node-rsa': empty,
-      stream: empty,
+      stream: 'stream-browserify',
       crypto: empty,
+      fs: empty,
       net: empty,
       path: empty,
       os: empty,
@@ -25,7 +26,7 @@ export default defineConfig({
     global: 'globalThis',
   },
   optimizeDeps: {
-    include: ['buffer', '@microsoft/dev-tunnels-ssh'],
+    include: ['buffer', '@microsoft/dev-tunnels-ssh', '@microsoft/dev-tunnels-ssh-keys'],
     esbuildOptions: {
       define: {
         global: 'globalThis',
@@ -36,35 +37,12 @@ export default defineConfig({
     commonjsOptions: {
       transformMixedEsModules: true,
     },
-    rollupOptions: {
-      onwarn(warning, warn) {
-        if (warning.code === 'UNRESOLVED_IMPORT') return;
-        warn(warning);
-      },
-    },
   },
   server: {
     port: 3000,
     open: true,
-    proxy: {
-      // Browser → same origin /ssh-ws → WebSSH gateway
-      '/ssh-ws': {
-        target: `ws://127.0.0.1:${GATEWAY}`,
-        ws: true,
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/ssh-ws/, '/ssh'),
-      },
-    },
   },
   preview: {
     port: 4173,
-    proxy: {
-      '/ssh-ws': {
-        target: `ws://127.0.0.1:${GATEWAY}`,
-        ws: true,
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/ssh-ws/, '/ssh'),
-      },
-    },
   },
-});
+}));

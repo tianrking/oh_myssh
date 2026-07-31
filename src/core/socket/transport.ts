@@ -25,20 +25,8 @@ export interface SocketTransport {
   connect(host: string, port: number, username?: string): Promise<DuplexByteStream>;
 }
 
-export type ConnectionMode = 'direct' | 'relay' | 'offline';
-
 export function hasDirectSockets(): boolean {
   return typeof window !== 'undefined' && 'TCPSocket' in window;
-}
-
-/**
- * Resolve the best available connection path.
- * Offline shell is always available as a zero-config fallback.
- */
-export function resolveConnectionMode(relayUrl?: string): ConnectionMode {
-  if (hasDirectSockets()) return 'direct';
-  if (relayUrl && relayUrl.trim().length > 0) return 'relay';
-  return 'offline';
 }
 
 /**
@@ -77,98 +65,6 @@ export class DirectSocketsTransport implements SocketTransport {
       writable: info.writable,
       close: async () => {
         await socket.close();
-      },
-    };
-  }
-}
-
-/**
- * WebSocket Relay Transport (self-hosted SSH WebSocket gateway)
- */
-export class WebSocketRelayTransport implements SocketTransport {
-  readonly name = 'WebSocket Relay';
-  private relayUrl: string;
-
-  constructor(relayUrl: string = 'wss://relay.ohmyssh.local/ssh') {
-    this.relayUrl = relayUrl;
-  }
-
-  async probe(): Promise<SocketCapabilities> {
-    return {
-      directTcp: false,
-      tcpListen: false,
-      udp: false,
-      portForwarding: false,
-      privateNetwork: false,
-    };
-  }
-
-  async connect(host: string, port: number): Promise<DuplexByteStream> {
-    const targetUrl = `${this.relayUrl}?host=${encodeURIComponent(host)}&port=${port}`;
-    const ws = new WebSocket(targetUrl);
-    ws.binaryType = 'arraybuffer';
-
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        ws.close();
-        reject(new Error(`WebSocket Relay 连接超时: ${this.relayUrl}`));
-      }, 12000);
-
-      ws.onopen = () => {
-        clearTimeout(timer);
-        resolve();
-      };
-      ws.onerror = () => {
-        clearTimeout(timer);
-        reject(new Error(`WebSocket Relay 连接失败: ${this.relayUrl}`));
-      };
-    });
-
-    const readable = new ReadableStream<Uint8Array>({
-      start(controller) {
-        ws.onmessage = (event) => {
-          if (event.data instanceof ArrayBuffer) {
-            controller.enqueue(new Uint8Array(event.data));
-          } else if (typeof event.data === 'string') {
-            controller.enqueue(new TextEncoder().encode(event.data));
-          }
-        };
-        ws.onclose = () => {
-          try {
-            controller.close();
-          } catch {
-            /* closed */
-          }
-        };
-        ws.onerror = () => {
-          try {
-            controller.error(new Error('WebSocket error'));
-          } catch {
-            /* closed */
-          }
-        };
-      },
-      cancel() {
-        ws.close();
-      },
-    });
-
-    const writable = new WritableStream<Uint8Array>({
-      write(chunk) {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(chunk);
-        }
-      },
-      close() {
-        ws.close();
-      },
-    });
-
-    return {
-      readable,
-      writable,
-      close: async () => {
-        ws.close();
       },
     };
   }

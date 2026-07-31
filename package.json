@@ -2,35 +2,42 @@
   "name": "oh_myssh",
   "private": true,
   "version": "0.1.0",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "gateway": "node server/gateway.mjs",
-    "dev:with-gateway": "concurrently -k -n gateway,web -c cyan,magenta \"npm run gateway\" \"vite\"",
+    "gateway:dev": "wrangler dev --config gateway/wrangler.toml",
+    "gateway:deploy": "wrangler deploy --config gateway/wrangler.toml",
+    "gateway:typecheck": "tsc -p gateway/tsconfig.json",
+    "gateway:dry-run": "wrangler deploy --dry-run --config gateway/wrangler.toml",
+    "check": "npm test && npm run build && npm run gateway:typecheck && npm run gateway:dry-run",
     "start": "node server/prod.mjs",
-    "test:ssh": "node scripts/e2e-ssh-check.mjs",
-    "test:webssh": "node scripts/e2e-webssh-check.mjs"
+    "test:ssh": "vitest run src/core/ssh/__tests__/client-integration.test.ts"
   },
   "dependencies": {
     "@microsoft/dev-tunnels-ssh": "^3.12.36",
+    "@microsoft/dev-tunnels-ssh-keys": "^3.12.36",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
-    "buffer": "^6.0.3",
+    "buffer": "^5.7.1",
     "clsx": "^2.1.1",
-    "concurrently": "^10.0.3",
     "dexie": "^4.0.10",
+    "events": "^3.3.0",
     "lucide-react": "^0.475.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "ssh2": "^1.17.0",
-    "tailwind-merge": "^3.0.1",
-    "ws": "^8.21.1"
+    "stream-browserify": "^3.0.0",
+    "tailwind-merge": "^3.0.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260727.1",
     "@tailwindcss/vite": "^4.0.7",
     "@types/node": "^22.13.4",
     "@types/react": "^19.0.10",
@@ -39,9 +46,12 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^29.1.1",
+    "ssh2": "^1.17.0",
     "tailwindcss": "^4.0.7",
     "typescript": "^5.7.3",
     "vite": "^6.1.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wrangler": "4.118.0",
+    "ws": "^8.21.1"
   }
 }

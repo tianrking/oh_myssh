@@ -1,36 +1,44 @@
-/**
- * Minimal SFTP v3 client over an SSH channel (pure frontend).
- */
 import { Buffer } from 'buffer';
 import type { SshChannel } from '@microsoft/dev-tunnels-ssh';
 
-const SSH_FXP_INIT = 1;
-const SSH_FXP_VERSION = 2;
-const SSH_FXP_OPEN = 3;
-const SSH_FXP_CLOSE = 4;
-const SSH_FXP_READ = 5;
-const SSH_FXP_WRITE = 6;
-const SSH_FXP_OPENDIR = 11;
-const SSH_FXP_READDIR = 12;
-const SSH_FXP_REMOVE = 13;
-const SSH_FXP_MKDIR = 14;
-const SSH_FXP_RMDIR = 15;
-const SSH_FXP_REALPATH = 16;
-const SSH_FXP_STAT = 17;
-const SSH_FXP_STATUS = 101;
-const SSH_FXP_HANDLE = 102;
-const SSH_FXP_DATA = 103;
-const SSH_FXP_NAME = 104;
-const SSH_FXP_ATTRS = 105;
+const FXP = {
+  INIT: 1,
+  VERSION: 2,
+  OPEN: 3,
+  CLOSE: 4,
+  READ: 5,
+  WRITE: 6,
+  LSTAT: 7,
+  OPENDIR: 11,
+  READDIR: 12,
+  REMOVE: 13,
+  MKDIR: 14,
+  RMDIR: 15,
+  REALPATH: 16,
+  STAT: 17,
+  RENAME: 18,
+  STATUS: 101,
+  HANDLE: 102,
+  DATA: 103,
+  NAME: 104,
+  ATTRS: 105,
+} as const;
 
-const SSH_FXF_READ = 0x00000001;
-const SSH_FXF_WRITE = 0x00000002;
-const SSH_FXF_CREAT = 0x00000008;
-const SSH_FXF_TRUNC = 0x00000010;
-
-const SSH_FILEXFER_ATTR_SIZE = 0x00000001;
-const SSH_FILEXFER_ATTR_PERMISSIONS = 0x00000004;
-const SSH_FILEXFER_ATTR_ACMODTIME = 0x00000008;
+const FX_OK = 0;
+const FX_EOF = 1;
+const FXF_READ = 0x00000001;
+const FXF_WRITE = 0x00000002;
+const FXF_CREAT = 0x00000008;
+const FXF_TRUNC = 0x00000010;
+const ATTR_SIZE = 0x00000001;
+const ATTR_UID_GID = 0x00000002;
+const ATTR_PERMISSIONS = 0x00000004;
+const ATTR_ACMODTIME = 0x00000008;
+const ATTR_EXTENDED = 0x80000000;
+const MAX_PACKET_BYTES = 16 * 1024 * 1024;
+const MAX_RECEIVE_BUFFER = 32 * 1024 * 1024;
+const TRANSFER_CHUNK_BYTES = 128 * 1024;
+const MAX_BUFFERED_FILE_BYTES = 256 * 1024 * 1024;
 
 export type SftpEntry = {
   name: string;
@@ -41,379 +49,526 @@ export type SftpEntry = {
   mtime: number;
 };
 
-type Pending = {
-  resolve: (pkt: Buffer) => void;
-  reject: (err: Error) => void;
+export type SftpAttributes = {
+  size: number;
+  permissions: number;
+  mtime: number;
 };
 
-export class SftpClient {
-  private channel: SshChannel;
-  private reqId = 1;
-  private pending = new Map<number, Pending>();
-  private rx = Buffer.alloc(0);
-  private ready: Promise<void>;
-  private disposed = false;
-  private dataDisposable: { dispose(): void };
+type Pending = {
+  resolve: (packet: Buffer) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
 
-  constructor(channel: SshChannel) {
-    this.channel = channel;
+function copyBytes(bytes: Uint8Array): Uint8Array {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy;
+}
+
+export class SftpClient {
+  private requestId = 1;
+  private pending = new Map<number, Pending>();
+  private receiveBuffer = Buffer.alloc(0);
+  private readonly ready: Promise<void>;
+  private disposed = false;
+  private readonly dataDisposable: { dispose(): void };
+  private versionResolve!: () => void;
+  private versionReject!: (error: Error) => void;
+  private extensions = new Map<string, string>();
+
+  constructor(private readonly channel: SshChannel) {
+    const versionPromise = new Promise<void>((resolve, reject) => {
+      this.versionResolve = resolve;
+      this.versionReject = reject;
+    });
     this.dataDisposable = channel.onDataReceived((data) => {
-      this.rx = Buffer.concat([this.rx, data]);
+      if (this.disposed) return;
+      if (this.receiveBuffer.length + data.length > MAX_RECEIVE_BUFFER) {
+        this.fail(new Error('SFTP receive buffer limit exceeded'));
+        return;
+      }
+      this.receiveBuffer = Buffer.concat([this.receiveBuffer, data]);
       channel.adjustWindow(data.length);
       this.drain();
     });
-    this.ready = this.init();
+    this.ready = this.initialize(versionPromise);
   }
 
-  private async init() {
-    // SSH_FXP_INIT version 3
-    const pkt = Buffer.alloc(9);
-    pkt.writeUInt32BE(5, 0);
-    pkt.writeUInt8(SSH_FXP_INIT, 4);
-    pkt.writeUInt32BE(3, 5);
-    await this.channel.send(pkt);
-
-    // Wait for VERSION
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('SFTP init timeout')), 10000);
-      const check = () => {
-        if (this.rx.length >= 5) {
-          const len = this.rx.readUInt32BE(0);
-          if (this.rx.length >= 4 + len) {
-            const type = this.rx.readUInt8(4);
-            this.rx = this.rx.subarray(4 + len);
-            clearTimeout(timer);
-            if (type === SSH_FXP_VERSION) resolve();
-            else reject(new Error(`SFTP unexpected init type ${type}`));
-            return;
-          }
-        }
-        setTimeout(check, 10);
-      };
-      check();
-    });
-  }
-
-  private drain() {
-    while (this.rx.length >= 5) {
-      const len = this.rx.readUInt32BE(0);
-      if (this.rx.length < 4 + len) break;
-      const body = this.rx.subarray(4, 4 + len);
-      this.rx = this.rx.subarray(4 + len);
-      const type = body.readUInt8(0);
-      if (type === SSH_FXP_VERSION) continue;
-      if (body.length < 5) continue;
-      const id = body.readUInt32BE(1);
-      const pending = this.pending.get(id);
-      if (pending) {
-        this.pending.delete(id);
-        pending.resolve(body);
-      }
+  private async initialize(versionPromise: Promise<void>): Promise<void> {
+    const body = Buffer.alloc(5);
+    body.writeUInt8(FXP.INIT, 0);
+    body.writeUInt32BE(3, 1);
+    await this.sendFrame(body);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        versionPromise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('SFTP initialization timed out')), 10_000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
-  private nextId() {
-    const id = this.reqId++;
-    if (this.reqId > 0x7fffffff) this.reqId = 1;
+  private drain(): void {
+    while (!this.disposed && this.receiveBuffer.length >= 4) {
+      const packetLength = this.receiveBuffer.readUInt32BE(0);
+      if (packetLength < 1 || packetLength > MAX_PACKET_BYTES) {
+        this.fail(new Error(`Invalid SFTP packet length: ${packetLength}`));
+        return;
+      }
+      if (this.receiveBuffer.length < 4 + packetLength) return;
+      const packet = this.receiveBuffer.subarray(4, 4 + packetLength);
+      this.receiveBuffer = this.receiveBuffer.subarray(4 + packetLength);
+      const type = packet.readUInt8(0);
+
+      if (type === FXP.VERSION) {
+        try {
+          if (packet.length < 5) throw new Error('Malformed SFTP VERSION packet');
+          const version = packet.readUInt32BE(1);
+          if (version < 3) throw new Error(`Unsupported SFTP version: ${version}`);
+          let offset = 5;
+          while (offset < packet.length) {
+            const [name, next] = this.readString(packet, offset);
+            const [value, after] = this.readString(packet, next);
+            this.extensions.set(name, value);
+            offset = after;
+          }
+          this.versionResolve();
+        } catch (error) {
+          this.versionReject(error instanceof Error ? error : new Error(String(error)));
+        }
+        continue;
+      }
+
+      if (packet.length < 5) {
+        this.fail(new Error('Malformed SFTP response packet'));
+        return;
+      }
+      const id = packet.readUInt32BE(1);
+      const request = this.pending.get(id);
+      if (!request) continue;
+      this.pending.delete(id);
+      clearTimeout(request.timer);
+      request.resolve(packet);
+    }
+  }
+
+  private fail(error: Error): void {
+    this.versionReject?.(error);
+    for (const request of this.pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(error);
+    }
+    this.pending.clear();
+    this.receiveBuffer = Buffer.alloc(0);
+    void this.close();
+  }
+
+  private nextRequestId(): number {
+    const id = this.requestId;
+    this.requestId = this.requestId >= 0x7fffffff ? 1 : this.requestId + 1;
     return id;
   }
 
-  private sendRequest(type: number, payload: Buffer): Promise<Buffer> {
-    const id = this.nextId();
-    const body = Buffer.alloc(1 + 4 + payload.length);
+  private async sendFrame(body: Buffer): Promise<void> {
+    if (this.disposed) throw new Error('SFTP client is closed');
+    if (body.length > MAX_PACKET_BYTES) throw new Error('SFTP request is too large');
+    const frame = Buffer.allocUnsafe(4 + body.length);
+    frame.writeUInt32BE(body.length, 0);
+    body.copy(frame, 4);
+    await this.channel.send(frame);
+  }
+
+  private sendRequest(type: number, payload: Buffer, timeoutMs = 30_000): Promise<Buffer> {
+    if (this.disposed) return Promise.reject(new Error('SFTP client is closed'));
+    const id = this.nextRequestId();
+    const body = Buffer.allocUnsafe(5 + payload.length);
     body.writeUInt8(type, 0);
     body.writeUInt32BE(id, 1);
     payload.copy(body, 5);
-    const frame = Buffer.alloc(4 + body.length);
-    frame.writeUInt32BE(body.length, 0);
-    body.copy(frame, 4);
 
     return new Promise<Buffer>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.channel.send(frame).catch((err) => {
+      const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(err);
+        reject(new Error(`SFTP request ${type} timed out`));
+      }, timeoutMs);
+      this.pending.set(id, { resolve, reject, timer });
+      this.sendFrame(body).catch((error) => {
+        const request = this.pending.get(id);
+        if (!request) return;
+        this.pending.delete(id);
+        clearTimeout(request.timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
       });
-      setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id);
-          reject(new Error(`SFTP request ${type} timeout`));
-        }
-      }, 30000);
     });
   }
 
-  private writeString(s: string): Buffer {
-    const b = Buffer.from(s, 'utf8');
-    const out = Buffer.alloc(4 + b.length);
-    out.writeUInt32BE(b.length, 0);
-    b.copy(out, 4);
-    return out;
+  private writeString(value: string | Uint8Array): Buffer {
+    const bytes = typeof value === 'string' ? Buffer.from(value, 'utf8') : Buffer.from(value);
+    if (bytes.length > 64 * 1024) throw new Error('SFTP string is too large');
+    const output = Buffer.allocUnsafe(4 + bytes.length);
+    output.writeUInt32BE(bytes.length, 0);
+    bytes.copy(output, 4);
+    return output;
   }
 
-  private readString(buf: Buffer, offset: number): [string, number] {
-    const len = buf.readUInt32BE(offset);
-    const s = buf.subarray(offset + 4, offset + 4 + len).toString('utf8');
-    return [s, offset + 4 + len];
+  private readString(buffer: Buffer, offset: number): [string, number] {
+    if (offset < 0 || offset + 4 > buffer.length) throw new Error('Malformed SFTP string length');
+    const length = buffer.readUInt32BE(offset);
+    if (length > MAX_PACKET_BYTES || offset + 4 + length > buffer.length) {
+      throw new Error('Malformed SFTP string data');
+    }
+    return [buffer.subarray(offset + 4, offset + 4 + length).toString('utf8'), offset + 4 + length];
   }
 
-  private ensureStatusOk(pkt: Buffer, action: string) {
-    const type = pkt.readUInt8(0);
-    if (type === SSH_FXP_STATUS) {
-      const code = pkt.readUInt32BE(5);
-      if (code !== 0) {
-        let msg = action;
-        try {
-          const [m] = this.readString(pkt, 9);
-          msg = m || action;
-        } catch {
-          /* ignore */
-        }
-        throw new Error(`SFTP ${action} failed (code ${code}): ${msg}`);
+  private readAttributes(buffer: Buffer, offset: number): [SftpAttributes, number] {
+    if (offset + 4 > buffer.length) throw new Error('Malformed SFTP attributes');
+    const flags = buffer.readUInt32BE(offset);
+    offset += 4;
+    let size = 0;
+    let permissions = 0;
+    let mtime = 0;
+    if (flags & ATTR_SIZE) {
+      if (offset + 8 > buffer.length) throw new Error('Malformed SFTP size');
+      size = buffer.readUInt32BE(offset) * 0x100000000 + buffer.readUInt32BE(offset + 4);
+      if (!Number.isSafeInteger(size)) throw new Error('SFTP file size exceeds JavaScript safe integer range');
+      offset += 8;
+    }
+    if (flags & ATTR_UID_GID) {
+      if (offset + 8 > buffer.length) throw new Error('Malformed SFTP uid/gid');
+      offset += 8;
+    }
+    if (flags & ATTR_PERMISSIONS) {
+      if (offset + 4 > buffer.length) throw new Error('Malformed SFTP permissions');
+      permissions = buffer.readUInt32BE(offset);
+      offset += 4;
+    }
+    if (flags & ATTR_ACMODTIME) {
+      if (offset + 8 > buffer.length) throw new Error('Malformed SFTP timestamps');
+      mtime = buffer.readUInt32BE(offset + 4);
+      offset += 8;
+    }
+    if (flags & ATTR_EXTENDED) {
+      if (offset + 4 > buffer.length) throw new Error('Malformed SFTP extended attribute count');
+      const count = buffer.readUInt32BE(offset);
+      offset += 4;
+      if (count > 4096) throw new Error('Too many SFTP extended attributes');
+      for (let i = 0; i < count; i++) {
+        [, offset] = this.readString(buffer, offset);
+        [, offset] = this.readString(buffer, offset);
       }
     }
+    return [{ size, permissions, mtime }, offset];
+  }
+
+  private statusCode(packet: Buffer): number | null {
+    return packet.readUInt8(0) === FXP.STATUS ? packet.readUInt32BE(5) : null;
+  }
+
+  private ensureStatusOk(packet: Buffer, action: string): void {
+    const code = this.statusCode(packet);
+    if (code === null) throw new Error(`SFTP ${action} returned an unexpected packet`);
+    if (code === FX_OK) return;
+    let message = action;
+    try {
+      [message] = this.readString(packet, 9);
+    } catch {
+      // Status messages are optional.
+    }
+    throw new Error(`SFTP ${action} failed (code ${code}): ${message || action}`);
+  }
+
+  private async openFile(path: string, flags: number): Promise<Buffer> {
+    const attrs = Buffer.alloc(4);
+    const flagBytes = Buffer.alloc(4);
+    flagBytes.writeUInt32BE(flags, 0);
+    const packet = await this.sendRequest(FXP.OPEN, Buffer.concat([this.writeString(path), flagBytes, attrs]));
+    if (packet.readUInt8(0) !== FXP.HANDLE) {
+      this.ensureStatusOk(packet, 'open');
+      throw new Error('SFTP open failed');
+    }
+    if (packet.length < 9) throw new Error('Malformed SFTP file handle');
+    const length = packet.readUInt32BE(5);
+    if (!length || 9 + length > packet.length) throw new Error('Malformed SFTP file handle');
+    return packet.subarray(9, 9 + length);
+  }
+
+  private handlePayload(handle: Buffer): Buffer {
+    return this.writeString(handle);
+  }
+
+  private async closeHandle(handle: Buffer): Promise<void> {
+    const packet = await this.sendRequest(FXP.CLOSE, this.handlePayload(handle));
+    this.ensureStatusOk(packet, 'close');
   }
 
   async realpath(path: string): Promise<string> {
     await this.ready;
-    const pkt = await this.sendRequest(SSH_FXP_REALPATH, this.writeString(path));
-    if (pkt.readUInt8(0) !== SSH_FXP_NAME) {
-      this.ensureStatusOk(pkt, 'realpath');
+    const packet = await this.sendRequest(FXP.REALPATH, this.writeString(path));
+    if (packet.readUInt8(0) !== FXP.NAME) {
+      this.ensureStatusOk(packet, 'realpath');
       throw new Error('SFTP realpath failed');
     }
-    const count = pkt.readUInt32BE(5);
-    if (count < 1) throw new Error('SFTP realpath empty');
-    const [name] = this.readString(pkt, 9);
-    return name;
+    if (packet.readUInt32BE(5) < 1) throw new Error('SFTP realpath returned no path');
+    return this.readString(packet, 9)[0];
+  }
+
+  async stat(path: string): Promise<SftpAttributes> {
+    await this.ready;
+    const packet = await this.sendRequest(FXP.STAT, this.writeString(path));
+    if (packet.readUInt8(0) !== FXP.ATTRS) {
+      this.ensureStatusOk(packet, 'stat');
+      throw new Error('SFTP stat failed');
+    }
+    return this.readAttributes(packet, 5)[0];
   }
 
   async list(path: string): Promise<SftpEntry[]> {
     await this.ready;
-    const openPkt = await this.sendRequest(SSH_FXP_OPENDIR, this.writeString(path));
-    if (openPkt.readUInt8(0) !== SSH_FXP_HANDLE) {
-      this.ensureStatusOk(openPkt, 'opendir');
+    const openPacket = await this.sendRequest(FXP.OPENDIR, this.writeString(path));
+    if (openPacket.readUInt8(0) !== FXP.HANDLE) {
+      this.ensureStatusOk(openPacket, 'opendir');
       throw new Error('SFTP opendir failed');
     }
-    const handleLen = openPkt.readUInt32BE(5);
-    const handle = openPkt.subarray(9, 9 + handleLen);
-    const handlePayload = Buffer.alloc(4 + handle.length);
-    handlePayload.writeUInt32BE(handle.length, 0);
-    handle.copy(handlePayload, 4);
-
+    const handleLength = openPacket.readUInt32BE(5);
+    if (!handleLength || 9 + handleLength > openPacket.length) throw new Error('Malformed directory handle');
+    const handle = openPacket.subarray(9, 9 + handleLength);
     const entries: SftpEntry[] = [];
     try {
-      while (true) {
-        const pkt = await this.sendRequest(SSH_FXP_READDIR, handlePayload);
-        const type = pkt.readUInt8(0);
-        if (type === SSH_FXP_STATUS) {
-          const code = pkt.readUInt32BE(5);
-          if (code === 1) break; // SSH_FX_EOF
-          this.ensureStatusOk(pkt, 'readdir');
+      while (entries.length <= 10_000) {
+        const packet = await this.sendRequest(FXP.READDIR, this.handlePayload(handle));
+        const status = this.statusCode(packet);
+        if (status === FX_EOF) break;
+        if (status !== null) {
+          this.ensureStatusOk(packet, 'readdir');
           break;
         }
-        if (type !== SSH_FXP_NAME) throw new Error('SFTP readdir unexpected');
-        const count = pkt.readUInt32BE(5);
-        let off = 9;
+        if (packet.readUInt8(0) !== FXP.NAME || packet.length < 9) throw new Error('Malformed readdir response');
+        const count = packet.readUInt32BE(5);
+        if (count > 10_000 || entries.length + count > 10_000) throw new Error('Directory listing exceeds 10,000 entries');
+        let offset = 9;
         for (let i = 0; i < count; i++) {
           let name: string;
           let longname: string;
-          [name, off] = this.readString(pkt, off);
-          [longname, off] = this.readString(pkt, off);
-          const flags = pkt.readUInt32BE(off);
-          off += 4;
-          let size = 0;
-          let permissions = 0;
-          let mtime = 0;
-          if (flags & SSH_FILEXFER_ATTR_SIZE) {
-            // uint64
-            const high = pkt.readUInt32BE(off);
-            const low = pkt.readUInt32BE(off + 4);
-            size = high * 0x100000000 + low;
-            off += 8;
-          }
-          if (flags & 0x00000002) {
-            // uid/gid
-            off += 8;
-          }
-          if (flags & SSH_FILEXFER_ATTR_PERMISSIONS) {
-            permissions = pkt.readUInt32BE(off);
-            off += 4;
-          }
-          if (flags & SSH_FILEXFER_ATTR_ACMODTIME) {
-            off += 4; // atime
-            mtime = pkt.readUInt32BE(off);
-            off += 4;
-          }
-          if (flags & 0x80000000) {
-            // extended
-            const extCount = pkt.readUInt32BE(off);
-            off += 4;
-            for (let e = 0; e < extCount; e++) {
-              let _s: string;
-              [_s, off] = this.readString(pkt, off);
-              [_s, off] = this.readString(pkt, off);
-            }
-          }
+          [name, offset] = this.readString(packet, offset);
+          [longname, offset] = this.readString(packet, offset);
+          const [attributes, next] = this.readAttributes(packet, offset);
+          offset = next;
           if (name === '.' || name === '..') continue;
-          const isDir = (permissions & 0o40000) !== 0 || longname.startsWith('d');
-          entries.push({ name, longname, isDir, size, permissions, mtime });
+          const isDir = (attributes.permissions & 0o170000) === 0o040000 || longname.startsWith('d');
+          entries.push({ name, longname, isDir, ...attributes });
         }
       }
     } finally {
-      await this.sendRequest(SSH_FXP_CLOSE, handlePayload).catch(() => {});
+      await this.closeHandle(handle).catch(() => undefined);
     }
-    return entries.sort((a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name);
+    return entries.sort((left, right) => {
+      if (left.isDir !== right.isDir) return left.isDir ? -1 : 1;
+      return left.name.localeCompare(right.name);
     });
   }
 
-  async readFile(
+  async readFileStream(
     path: string,
-    onProgress?: (n: number) => void
-  ): Promise<Uint8Array> {
+    onProgress?: (bytesRead: number, totalBytes: number) => void,
+  ): Promise<ReadableStream<Uint8Array>> {
     await this.ready;
-    const openFlags = SSH_FXF_READ;
-    const payload = Buffer.concat([
-      this.writeString(path),
-      (() => {
-        const b = Buffer.alloc(8);
-        b.writeUInt32BE(openFlags, 0);
-        b.writeUInt32BE(0, 4); // attr flags
-        return b;
-      })(),
-    ]);
-    const openPkt = await this.sendRequest(SSH_FXP_OPEN, payload);
-    if (openPkt.readUInt8(0) !== SSH_FXP_HANDLE) {
-      this.ensureStatusOk(openPkt, 'open');
-      throw new Error('SFTP open failed');
-    }
-    const handleLen = openPkt.readUInt32BE(5);
-    const handle = openPkt.subarray(9, 9 + handleLen);
-    const handleStr = Buffer.alloc(4 + handle.length);
-    handleStr.writeUInt32BE(handle.length, 0);
-    handle.copy(handleStr, 4);
-
-    const chunks: Buffer[] = [];
+    const attributes = await this.stat(path);
+    const handle = await this.openFile(path, FXF_READ);
     let offset = 0;
-    const chunkSize = 32 * 1024;
-    try {
-      while (true) {
-        const req = Buffer.alloc(4 + handle.length + 8 + 4);
-        let o = 0;
-        req.writeUInt32BE(handle.length, o);
-        o += 4;
-        handle.copy(req, o);
-        o += handle.length;
-        // uint64 offset
-        req.writeUInt32BE(Math.floor(offset / 0x100000000), o);
-        req.writeUInt32BE(offset >>> 0, o + 4);
-        o += 8;
-        req.writeUInt32BE(chunkSize, o);
-        const pkt = await this.sendRequest(SSH_FXP_READ, req);
-        const type = pkt.readUInt8(0);
-        if (type === SSH_FXP_STATUS) {
-          const code = pkt.readUInt32BE(5);
-          if (code === 1) break; // EOF
-          this.ensureStatusOk(pkt, 'read');
-          break;
+    let finished = false;
+    const close = async () => {
+      if (finished) return;
+      finished = true;
+      await this.closeHandle(handle).catch(() => undefined);
+    };
+
+    return new ReadableStream<Uint8Array>({
+      pull: async (controller) => {
+        if (finished) {
+          controller.close();
+          return;
         }
-        if (type !== SSH_FXP_DATA) throw new Error('SFTP read unexpected');
-        const dataLen = pkt.readUInt32BE(5);
-        const data = pkt.subarray(9, 9 + dataLen);
-        chunks.push(data);
-        offset += data.length;
-        onProgress?.(offset);
-        if (data.length === 0) break;
-      }
-    } finally {
-      await this.sendRequest(SSH_FXP_CLOSE, handleStr).catch(() => {});
-    }
-    return new Uint8Array(Buffer.concat(chunks));
+        const request = Buffer.allocUnsafe(4 + handle.length + 8 + 4);
+        let position = 0;
+        request.writeUInt32BE(handle.length, position);
+        position += 4;
+        handle.copy(request, position);
+        position += handle.length;
+        request.writeUInt32BE(Math.floor(offset / 0x100000000), position);
+        request.writeUInt32BE(offset >>> 0, position + 4);
+        position += 8;
+        request.writeUInt32BE(TRANSFER_CHUNK_BYTES, position);
+        try {
+          const packet = await this.sendRequest(FXP.READ, request);
+          const status = this.statusCode(packet);
+          if (status === FX_EOF) {
+            await close();
+            controller.close();
+            return;
+          }
+          if (status !== null) this.ensureStatusOk(packet, 'read');
+          if (packet.readUInt8(0) !== FXP.DATA || packet.length < 9) throw new Error('Malformed SFTP read response');
+          const length = packet.readUInt32BE(5);
+          if (length > TRANSFER_CHUNK_BYTES || 9 + length > packet.length) throw new Error('Malformed SFTP data packet');
+          if (!length) {
+            await close();
+            controller.close();
+            return;
+          }
+          const data = copyBytes(packet.subarray(9, 9 + length));
+          offset += data.byteLength;
+          onProgress?.(offset, attributes.size);
+          controller.enqueue(data);
+        } catch (error) {
+          await close();
+          controller.error(error);
+        }
+      },
+      cancel: close,
+    });
   }
 
-  async writeFile(
-    path: string,
-    data: Uint8Array,
-    onProgress?: (n: number) => void
-  ): Promise<void> {
-    await this.ready;
-    const openFlags = SSH_FXF_WRITE | SSH_FXF_CREAT | SSH_FXF_TRUNC;
-    const payload = Buffer.concat([
-      this.writeString(path),
-      (() => {
-        const b = Buffer.alloc(8);
-        b.writeUInt32BE(openFlags, 0);
-        b.writeUInt32BE(0, 4);
-        return b;
-      })(),
-    ]);
-    const openPkt = await this.sendRequest(SSH_FXP_OPEN, payload);
-    if (openPkt.readUInt8(0) !== SSH_FXP_HANDLE) {
-      this.ensureStatusOk(openPkt, 'open-write');
-      throw new Error('SFTP open for write failed');
+  async readFile(path: string, onProgress?: (bytesRead: number) => void): Promise<Uint8Array> {
+    const attributes = await this.stat(path);
+    if (attributes.size > MAX_BUFFERED_FILE_BYTES) {
+      throw new Error('File is too large for buffered read; use readFileStream instead');
     }
-    const handleLen = openPkt.readUInt32BE(5);
-    const handle = openPkt.subarray(9, 9 + handleLen);
-    const handleStr = Buffer.alloc(4 + handle.length);
-    handleStr.writeUInt32BE(handle.length, 0);
-    handle.copy(handleStr, 4);
+    const stream = await this.readFileStream(path, (read) => onProgress?.(read));
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_BUFFERED_FILE_BYTES) throw new Error('Buffered SFTP read exceeded its limit');
+      chunks.push(value);
+    }
+    const output = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      output.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return output;
+  }
 
-    const chunkSize = 32 * 1024;
+  private async writeStreamToPath(
+    path: string,
+    stream: ReadableStream<Uint8Array>,
+    onProgress?: (bytesWritten: number) => void,
+  ): Promise<number> {
+    const handle = await this.openFile(path, FXF_WRITE | FXF_CREAT | FXF_TRUNC);
+    const reader = stream.getReader();
     let offset = 0;
     try {
-      while (offset < data.length) {
-        const end = Math.min(offset + chunkSize, data.length);
-        const slice = data.subarray(offset, end);
-        const req = Buffer.alloc(4 + handle.length + 8 + 4 + slice.length);
-        let o = 0;
-        req.writeUInt32BE(handle.length, o);
-        o += 4;
-        handle.copy(req, o);
-        o += handle.length;
-        req.writeUInt32BE(Math.floor(offset / 0x100000000), o);
-        req.writeUInt32BE(offset >>> 0, o + 4);
-        o += 8;
-        req.writeUInt32BE(slice.length, o);
-        o += 4;
-        req.set(slice, o);
-        const pkt = await this.sendRequest(SSH_FXP_WRITE, req);
-        this.ensureStatusOk(pkt, 'write');
-        offset = end;
-        onProgress?.(offset);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        for (let sourceOffset = 0; sourceOffset < value.byteLength; sourceOffset += TRANSFER_CHUNK_BYTES) {
+          const chunk = value.subarray(sourceOffset, Math.min(value.byteLength, sourceOffset + TRANSFER_CHUNK_BYTES));
+          const request = Buffer.allocUnsafe(4 + handle.length + 8 + 4 + chunk.byteLength);
+          let position = 0;
+          request.writeUInt32BE(handle.length, position);
+          position += 4;
+          handle.copy(request, position);
+          position += handle.length;
+          request.writeUInt32BE(Math.floor(offset / 0x100000000), position);
+          request.writeUInt32BE(offset >>> 0, position + 4);
+          position += 8;
+          request.writeUInt32BE(chunk.byteLength, position);
+          position += 4;
+          request.set(chunk, position);
+          const packet = await this.sendRequest(FXP.WRITE, request);
+          this.ensureStatusOk(packet, 'write');
+          offset += chunk.byteLength;
+          onProgress?.(offset);
+        }
       }
+      return offset;
     } finally {
-      await this.sendRequest(SSH_FXP_CLOSE, handleStr).catch(() => {});
+      reader.releaseLock();
+      await this.closeHandle(handle).catch(() => undefined);
     }
+  }
+
+  async writeFileStream(
+    path: string,
+    stream: ReadableStream<Uint8Array>,
+    onProgress?: (bytesWritten: number) => void,
+    atomic = true,
+  ): Promise<number> {
+    await this.ready;
+    if (!atomic) return this.writeStreamToPath(path, stream, onProgress);
+    const temporaryPath = `${path}.ohmyssh-${crypto.randomUUID()}.part`;
+    try {
+      const written = await this.writeStreamToPath(temporaryPath, stream, onProgress);
+      await this.rename(temporaryPath, path);
+      return written;
+    } catch (error) {
+      await this.remove(temporaryPath).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async writeFile(path: string, data: Uint8Array, onProgress?: (bytesWritten: number) => void): Promise<void> {
+    const copy = copyBytes(data);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(copy);
+        controller.close();
+      },
+    });
+    await this.writeFileStream(path, stream, onProgress, true);
+  }
+
+  async rename(oldPath: string, newPath: string): Promise<void> {
+    await this.ready;
+    const packet = await this.sendRequest(
+      FXP.RENAME,
+      Buffer.concat([this.writeString(oldPath), this.writeString(newPath)]),
+    );
+    this.ensureStatusOk(packet, 'rename');
   }
 
   async remove(path: string): Promise<void> {
     await this.ready;
-    const pkt = await this.sendRequest(SSH_FXP_REMOVE, this.writeString(path));
-    this.ensureStatusOk(pkt, 'remove');
+    const packet = await this.sendRequest(FXP.REMOVE, this.writeString(path));
+    this.ensureStatusOk(packet, 'remove');
   }
 
   async mkdir(path: string): Promise<void> {
     await this.ready;
-    const payload = Buffer.concat([this.writeString(path), Buffer.alloc(4)]); // empty attrs
-    const pkt = await this.sendRequest(SSH_FXP_MKDIR, payload);
-    this.ensureStatusOk(pkt, 'mkdir');
+    const packet = await this.sendRequest(FXP.MKDIR, Buffer.concat([this.writeString(path), Buffer.alloc(4)]));
+    this.ensureStatusOk(packet, 'mkdir');
   }
 
   async rmdir(path: string): Promise<void> {
     await this.ready;
-    const pkt = await this.sendRequest(SSH_FXP_RMDIR, this.writeString(path));
-    this.ensureStatusOk(pkt, 'rmdir');
+    const packet = await this.sendRequest(FXP.RMDIR, this.writeString(path));
+    this.ensureStatusOk(packet, 'rmdir');
   }
 
   async close(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
     this.dataDisposable.dispose();
-    for (const [, p] of this.pending) {
-      p.reject(new Error('SFTP closed'));
+    const error = new Error('SFTP client closed');
+    this.versionReject?.(error);
+    for (const request of this.pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(error);
     }
     this.pending.clear();
-    await this.channel.close().catch(() => {});
+    this.receiveBuffer = Buffer.alloc(0);
+    await this.channel.close().catch(() => undefined);
   }
 }

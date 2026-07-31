@@ -22,6 +22,7 @@ export interface TabItem {
   /** Session password kept only in memory — never written to disk by default */
   password?: string;
   privateKey?: string;
+  privateKeyPassphrase?: string;
   splitMode?: 'none' | 'vertical' | 'horizontal';
   theme?: string;
   /** When true, skip real SSH and force offline shell */

@@ -1,274 +1,215 @@
 /**
- * Production all-in-one server:
- *   - Serves the built web UI (dist/)
- *   - WebSSH gateway WebSocket at /ssh and /ssh-ws
+ * Production static server for the built Oh My SSH UI.
  *
- * End users only open the website URL — no download, no npm, no local agent.
- *
- *   npm run build && npm start
- *   # or: docker run ...
+ * This process deliberately has no SSH, TCP relay, or WebSocket gateway. Real
+ * SSH transport is provided by the separately deployed Cloudflare raw relay.
  */
-import http from 'node:http';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WebSocketServer } from 'ws';
-import { Client } from 'ssh2';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..');
-const DIST = path.join(ROOT, 'dist');
-const PORT = Number(process.env.PORT || process.env.OMS_GATEWAY_PORT || 8080);
-const HOST = process.env.OMS_GATEWAY_HOST || '0.0.0.0';
+const MODULE_PATH = fileURLToPath(import.meta.url);
+const ROOT = path.resolve(path.dirname(MODULE_PATH), '..');
+const DEFAULT_DIST = path.join(ROOT, 'dist');
 
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
+const MIME = Object.freeze({
   '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.json': 'application/json',
+  '.html': 'text/html; charset=utf-8',
   '.ico': 'image/x-icon',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
   '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.woff': 'font/woff',
   '.woff2': 'font/woff2',
-  '.map': 'application/json',
-};
+});
 
-function sendJson(ws, obj) {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
+export const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "connect-src 'self' https: wss:",
+  "font-src 'self' data:",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "img-src 'self' data: blob:",
+  "manifest-src 'self'",
+  "object-src 'none'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "worker-src 'self' blob:",
+].join('; ');
+
+export const SECURITY_HEADERS = Object.freeze({
+  'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Permissions-Policy': 'camera=(), display-capture=(), geolocation=(), microphone=(), payment=(), usb=()',
+  'Referrer-Policy': 'no-referrer',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'X-Permitted-Cross-Domain-Policies': 'none',
+});
+
+function responseHeaders(extra = {}) {
+  return { ...SECURITY_HEADERS, ...extra };
 }
 
-function attachSshSession(ws) {
-  let ssh = null;
-  let shell = null;
-  let connected = false;
+function send(req, res, status, headers, body = '') {
+  const payload = typeof body === 'string' ? Buffer.from(body) : body;
+  res.writeHead(status, responseHeaders({
+    'Content-Length': String(payload.byteLength),
+    ...headers,
+  }));
+  res.end(req.method === 'HEAD' ? undefined : payload);
+}
 
-  const cleanup = () => {
-    try {
-      shell?.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      ssh?.end();
-    } catch {
-      /* ignore */
-    }
-    shell = null;
-    ssh = null;
-    connected = false;
-  };
+function isInside(root, candidate) {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
 
-  ws.on('message', (data, isBinary) => {
-    if (connected && shell) {
-      if (isBinary) {
-        shell.write(Buffer.isBuffer(data) ? data : Buffer.from(data));
+async function regularFile(filename) {
+  try {
+    const stat = await fs.promises.stat(filename);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function sendFile(req, res, filename, cacheControl) {
+  const data = await fs.promises.readFile(filename);
+  const contentType = MIME[path.extname(filename).toLowerCase()] || 'application/octet-stream';
+  send(req, res, 200, {
+    'Cache-Control': cacheControl,
+    'Content-Type': contentType,
+  }, data);
+}
+
+export async function serveStatic(req, res, distDir = DEFAULT_DIST) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    send(req, res, 405, {
+      Allow: 'GET, HEAD',
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
+    }, 'Method not allowed');
+    return;
+  }
+
+  let url;
+  let pathname;
+  try {
+    url = new URL(req.url || '/', 'http://static.invalid');
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    send(req, res, 400, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
+    }, 'Bad request');
+    return;
+  }
+
+  if (pathname === '/health') {
+    send(req, res, 200, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'application/json; charset=utf-8',
+    }, JSON.stringify({ ok: true, service: 'oh-myssh', mode: 'static-only', sshGateway: false }));
+    return;
+  }
+
+  if (pathname.includes('\0')) {
+    send(req, res, 400, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
+    }, 'Bad request');
+    return;
+  }
+
+  const root = path.resolve(distDir);
+  const requestedPath = pathname === '/' ? '/index.html' : pathname;
+  const filename = path.resolve(root, `.${requestedPath}`);
+  if (!isInside(root, filename)) {
+    send(req, res, 403, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
+    }, 'Forbidden');
+    return;
+  }
+
+  if (await regularFile(filename)) {
+    const cacheControl = path.basename(filename) === 'index.html'
+      ? 'no-cache'
+      : 'public, max-age=3600';
+    await sendFile(req, res, filename, cacheControl);
+    return;
+  }
+
+  // Only extensionless routes receive the SPA shell. Missing assets must stay
+  // 404 so a deployment error cannot be hidden behind an HTML response.
+  if (!path.extname(requestedPath)) {
+    const indexPath = path.join(root, 'index.html');
+    if (await regularFile(indexPath)) {
+      await sendFile(req, res, indexPath, 'no-cache');
+      return;
+    }
+  }
+
+  send(req, res, 404, {
+    'Cache-Control': 'no-store',
+    'Content-Type': 'text/plain; charset=utf-8',
+  }, 'Not found');
+}
+
+function rejectUpgrade(_req, socket) {
+  const body = 'WebSocket gateways are not served by this process. Use the configured Cloudflare relay.\n';
+  const response = [
+    'HTTP/1.1 426 Upgrade Required',
+    'Connection: close',
+    'Content-Type: text/plain; charset=utf-8',
+    'Cache-Control: no-store',
+    'X-Content-Type-Options: nosniff',
+    `Content-Length: ${Buffer.byteLength(body)}`,
+    '',
+    body,
+  ].join('\r\n');
+  socket.end(response);
+}
+
+export function createStaticServer({ distDir = DEFAULT_DIST } = {}) {
+  const server = http.createServer((req, res) => {
+    void serveStatic(req, res, distDir).catch(() => {
+      if (res.headersSent) {
+        res.destroy();
         return;
       }
-      const text = data.toString();
-      try {
-        const msg = JSON.parse(text);
-        if (msg.type === 'resize') {
-          try {
-            shell.setWindow(Number(msg.rows) || 24, Number(msg.cols) || 80, 0, 0);
-          } catch {
-            /* ignore */
-          }
-          return;
-        }
-        if (msg.type === 'ping') {
-          sendJson(ws, { type: 'pong', t: Date.now() });
-          return;
-        }
-      } catch {
-        /* plain text */
-      }
-      shell.write(text);
-      return;
-    }
-
-    if (isBinary) {
-      sendJson(ws, { type: 'error', message: 'Expected JSON connect first' });
-      return;
-    }
-
-    let msg;
-    try {
-      msg = JSON.parse(data.toString());
-    } catch {
-      sendJson(ws, { type: 'error', message: 'Invalid JSON' });
-      return;
-    }
-
-    if (msg.type !== 'connect') {
-      sendJson(ws, { type: 'error', message: 'First message must be type=connect' });
-      return;
-    }
-
-    const host = String(msg.host || '').trim();
-    const port = Number(msg.port) || 22;
-    const username = String(msg.username || '').trim();
-    const password = msg.password ? String(msg.password) : undefined;
-    const privateKey = msg.privateKey ? String(msg.privateKey) : undefined;
-    const cols = Number(msg.cols) || 120;
-    const rows = Number(msg.rows) || 40;
-
-    if (!host || !username) {
-      sendJson(ws, { type: 'error', message: 'host and username required' });
-      return;
-    }
-    if (!password && !privateKey) {
-      sendJson(ws, { type: 'error', message: 'password or privateKey required' });
-      return;
-    }
-
-    sendJson(ws, {
-      type: 'status',
-      status: 'connecting',
-      target: `${username}@${host}:${port}`,
+      send(req, res, 500, {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'text/plain; charset=utf-8',
+      }, 'Internal server error');
     });
-
-    ssh = new Client();
-    ssh.on('ready', () => {
-      ssh.shell({ term: 'xterm-256color', cols, rows }, (err, stream) => {
-        if (err) {
-          sendJson(ws, { type: 'error', message: `shell failed: ${err.message}` });
-          cleanup();
-          ws.close();
-          return;
-        }
-        shell = stream;
-        connected = true;
-        sendJson(ws, {
-          type: 'ready',
-          target: `${username}@${host}:${port}`,
-          mode: 'webssh-gateway',
-        });
-        stream.on('data', (chunk) => {
-          if (ws.readyState === ws.OPEN) ws.send(chunk, { binary: true });
-        });
-        stream.stderr?.on('data', (chunk) => {
-          if (ws.readyState === ws.OPEN) ws.send(chunk, { binary: true });
-        });
-        stream.on('close', () => {
-          sendJson(ws, { type: 'closed', reason: 'remote shell closed' });
-          cleanup();
-          try {
-            ws.close();
-          } catch {
-            /* ignore */
-          }
-        });
-      });
-    });
-
-    ssh.on('error', (err) => {
-      sendJson(ws, { type: 'error', message: err?.message || String(err) });
-      cleanup();
-      try {
-        ws.close();
-      } catch {
-        /* ignore */
-      }
-    });
-
-    const cfg = {
-      host,
-      port,
-      username,
-      readyTimeout: 20000,
-    };
-    if (privateKey) {
-      cfg.privateKey = privateKey;
-      if (msg.passphrase) cfg.passphrase = String(msg.passphrase);
-    } else {
-      cfg.password = password;
-    }
-    try {
-      ssh.connect(cfg);
-    } catch (e) {
-      sendJson(ws, { type: 'error', message: e?.message || String(e) });
-      cleanup();
-    }
   });
-
-  ws.on('close', () => cleanup());
-  ws.on('error', () => cleanup());
+  server.on('upgrade', rejectUpgrade);
+  return server;
 }
 
-function serveStatic(req, res) {
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        ok: true,
-        service: 'oh-myssh',
-        mode: 'webssh-all-in-one',
-        userNeeds: 'browser only — no local install',
-      })
-    );
-    return;
+function isMainModule() {
+  return Boolean(process.argv[1]) && path.resolve(process.argv[1]) === path.resolve(MODULE_PATH);
+}
+
+if (isMainModule()) {
+  const port = Number(process.env.PORT || 8080);
+  const host = process.env.HOST || '0.0.0.0';
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('PORT must be an integer between 1 and 65535');
   }
-
-  let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
-  if (urlPath === '/') urlPath = '/index.html';
-
-  // Prevent path traversal
-  const filePath = path.normalize(path.join(DIST, urlPath));
-  if (!filePath.startsWith(DIST)) {
-    res.writeHead(403);
-    res.end('Forbidden');
-    return;
+  if (!fs.existsSync(DEFAULT_DIST)) {
+    console.warn('[oh-myssh] dist/ missing - run `npm run build` before `npm start`');
   }
-
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      // SPA fallback
-      fs.readFile(path.join(DIST, 'index.html'), (err2, html) => {
-        if (err2) {
-          res.writeHead(404, { 'Content-Type': 'text/plain' });
-          res.end(
-            'UI not built. Run: npm run build && npm start\n' +
-              'Or for dev: npm run dev'
-          );
-          return;
-        }
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(html);
-      });
-      return;
-    }
-    const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
-    res.end(data);
+  createStaticServer().listen(port, host, () => {
+    console.log(`[oh-myssh] static UI listening on http://${host}:${port}`);
+    console.log('[oh-myssh] SSH transport uses the configured Cloudflare raw relay; no local gateway is exposed.');
   });
 }
-
-if (!fs.existsSync(DIST)) {
-  console.warn('[oh-myssh] dist/ missing — run `npm run build` before `npm start`');
-}
-
-const server = http.createServer(serveStatic);
-const wss = new WebSocketServer({ noServer: true });
-
-server.on('upgrade', (req, socket, head) => {
-  const pathname = (req.url || '').split('?')[0];
-  // Accept both production path and vite-dev path name
-  if (pathname === '/ssh' || pathname === '/ssh-ws') {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      attachSshSession(ws);
-    });
-    return;
-  }
-  socket.destroy();
-});
-
-server.listen(PORT, HOST, () => {
-  console.log('');
-  console.log('  Oh My SSH — WebSSH (all-in-one)');
-  console.log('  ─────────────────────────────────');
-  console.log(`  Open in browser:  http://127.0.0.1:${PORT}`);
-  console.log(`  WebSocket SSH:    ws://127.0.0.1:${PORT}/ssh`);
-  console.log('');
-  console.log('  End users: open the URL only. No download. No local install.');
-  console.log('');
-});

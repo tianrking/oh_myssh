@@ -14,12 +14,13 @@ import {
 } from 'lucide-react';
 import type { TabItem } from './WorkspaceTabs';
 import { opfsEngine } from '../core/sftp/opfs';
-import { connectSshShell, type SshShellSession } from '../core/ssh/client';
+import { connectSftpSession, type SftpSshSession } from '../core/ssh/client';
 import type { SftpClient, SftpEntry } from '../core/ssh/sftp-client';
 
 interface FileItem {
   name: string;
   isDir: boolean;
+  sizeBytes: number;
   size: string;
   updatedAt: string;
   permissions: string;
@@ -30,18 +31,32 @@ interface TransferTask {
   fileName: string;
   direction: 'upload' | 'download';
   progress: number;
+  transferredBytes: number;
+  totalBytes: number;
   status: 'transferring' | 'completed' | 'error';
 }
 
 interface Props {
   tab: TabItem;
   relayUrl?: string;
+  relayAccessToken?: string;
 }
 
 function formatSize(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function transferPercent(transferredBytes: number, totalBytes: number): number {
+  if (totalBytes <= 0) return 0;
+  return Math.min(99, Math.max(0, Math.floor((transferredBytes / totalBytes) * 100)));
+}
+
+function remoteChildPath(parent: string, name: string): string {
+  const base = parent.replace(/\/+$/, '');
+  return `${base || ''}/${name}`;
 }
 
 function formatTime(ts: number): string {
@@ -68,10 +83,11 @@ function modeString(mode: number, isDir: boolean): string {
 
 function toFileItems(entries: SftpEntry[]): FileItem[] {
   return [
-    { name: '..', isDir: true, size: '-', updatedAt: '-', permissions: 'drwxr-xr-x' },
+    { name: '..', isDir: true, sizeBytes: 0, size: '-', updatedAt: '-', permissions: 'drwxr-xr-x' },
     ...entries.map((e) => ({
       name: e.name,
       isDir: e.isDir,
+      sizeBytes: e.size,
       size: e.isDir ? '-' : formatSize(e.size),
       updatedAt: formatTime(e.mtime),
       permissions: modeString(e.permissions, e.isDir),
@@ -79,12 +95,12 @@ function toFileItems(entries: SftpEntry[]): FileItem[] {
   ];
 }
 
-export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
+export const SftpView: React.FC<Props> = ({ tab, relayUrl, relayAccessToken }) => {
   const [remotePath, setRemotePath] = useState('.');
-  const [localPath, setLocalPath] = useState('OPFS:/');
+  const [localPath] = useState('OPFS:/');
   const [remoteFiles, setRemoteFiles] = useState<FileItem[]>([]);
   const [localFiles, setLocalFiles] = useState<FileItem[]>([
-    { name: '..', isDir: true, size: '-', updatedAt: '-', permissions: 'drwxr-xr-x' },
+    { name: '..', isDir: true, sizeBytes: 0, size: '-', updatedAt: '-', permissions: 'drwxr-xr-x' },
   ]);
   const [transfers, setTransfers] = useState<TransferTask[]>([]);
   const [opfsReady, setOpfsReady] = useState(false);
@@ -93,37 +109,35 @@ export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
   const [password, setPassword] = useState(tab.password || '');
   const [connecting, setConnecting] = useState(false);
 
-  const sshRef = useRef<SshShellSession | null>(null);
+  const sshRef = useRef<SftpSshSession | null>(null);
   const sftpRef = useRef<SftpClient | null>(null);
 
   const refreshLocal = useCallback(async () => {
-    if (!opfsEngine.supported) {
+    try {
+      if (!opfsEngine.supported) {
+        throw new Error('当前浏览器不支持 OPFS，本地 SFTP 文件区不可用');
+      }
+      const entries = await opfsEngine.listDirectory();
       setLocalFiles([
-        { name: '..', isDir: true, size: '-', updatedAt: '-', permissions: 'drwxr-xr-x' },
-        {
-          name: '(OPFS unsupported)',
-          isDir: false,
-          size: '-',
-          updatedAt: '-',
-          permissions: '----------',
-        },
+        { name: '..', isDir: true, sizeBytes: 0, size: '-', updatedAt: '-', permissions: 'drwxr-xr-x' },
+        ...entries.map((entry) => ({
+          name: entry.name,
+          isDir: entry.isDir,
+          sizeBytes: entry.size,
+          size: entry.isDir ? '-' : formatSize(entry.size),
+          updatedAt: entry.updatedAt
+            ? new Date(entry.updatedAt).toISOString().slice(0, 16).replace('T', ' ')
+            : '-',
+          permissions: entry.isDir ? 'drwxr-xr-x' : '-rw-r--r--',
+        })),
       ]);
+      setOpfsReady(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLocalFiles([]);
       setOpfsReady(false);
-      return;
+      setStatusMsg(`Local storage error: ${message}`);
     }
-    await opfsEngine.ensureDemoFiles();
-    const entries = await opfsEngine.listDirectory();
-    setLocalFiles([
-      { name: '..', isDir: true, size: '-', updatedAt: '-', permissions: 'drwxr-xr-x' },
-      ...entries.map((e) => ({
-        name: e.name,
-        isDir: e.isDir,
-        size: e.isDir ? '-' : formatSize(e.size),
-        updatedAt: new Date(e.updatedAt).toISOString().slice(0, 16).replace('T', ' '),
-        permissions: e.isDir ? 'drwxr-xr-x' : '-rw-r--r--',
-      })),
-    ]);
-    setOpfsReady(true);
   }, []);
 
   const refreshRemote = useCallback(async (path?: string) => {
@@ -146,22 +160,28 @@ export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
       return;
     }
     setConnecting(true);
+    setSftpReady(false);
     setStatusMsg('Connecting SFTP…');
     try {
+      await sftpRef.current?.close().catch(() => undefined);
+      sftpRef.current = null;
       await sshRef.current?.close().catch(() => {});
-      const ssh = await connectSshShell({
+      sshRef.current = null;
+      const ssh = await connectSftpSession({
         host: tab.host,
         port: tab.port,
         auth: {
           username: tab.username,
           password: password || tab.password,
           privateKeyPem: tab.privateKey,
+          privateKeyPassphrase: tab.privateKeyPassphrase,
         },
         relayUrl: relayUrl || undefined,
+        relayAccessToken,
         onStatus: (m) => setStatusMsg(m),
       });
       sshRef.current = ssh;
-      const sftp = await ssh.openSftp();
+      const sftp = ssh.client;
       sftpRef.current = sftp;
       const home = await sftp.realpath('.');
       setRemotePath(home);
@@ -170,12 +190,16 @@ export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
       setRemoteFiles(toFileItems(entries));
       setStatusMsg(`SFTP connected · ${tab.username}@${tab.host} · ${home}`);
     } catch (e) {
+      await sftpRef.current?.close().catch(() => undefined);
+      sftpRef.current = null;
+      await sshRef.current?.close().catch(() => undefined);
+      sshRef.current = null;
       setSftpReady(false);
       setStatusMsg(`SFTP error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setConnecting(false);
     }
-  }, [password, tab, relayUrl]);
+  }, [password, tab, relayUrl, relayAccessToken]);
 
   useEffect(() => {
     void refreshLocal();
@@ -197,74 +221,107 @@ export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
     setTransfers((prev) => [task, ...prev].slice(0, 20));
   };
 
+  const updateTransfer = (id: string, patch: Partial<TransferTask>) => {
+    setTransfers((previous) =>
+      previous.map((task) => (task.id === id ? { ...task, ...patch } : task)),
+    );
+  };
+
   const handleUpload = async (fileName: string) => {
-    const id = Date.now().toString();
-    pushTransfer({ id, fileName, direction: 'upload', progress: 5, status: 'transferring' });
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    pushTransfer({
+      id,
+      fileName,
+      direction: 'upload',
+      progress: 0,
+      transferredBytes: 0,
+      totalBytes: 0,
+      status: 'transferring',
+    });
     try {
-      if (!sftpRef.current || !opfsEngine.supported) throw new Error('SFTP/OPFS not ready');
-      const stream = await opfsEngine.readStreamFromFile(fileName);
-      const reader = stream.getReader();
-      const chunks: Uint8Array[] = [];
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) chunks.push(value);
-      }
-      let total = 0;
-      for (const c of chunks) total += c.byteLength;
-      const data = new Uint8Array(total);
-      let off = 0;
-      for (const c of chunks) {
-        data.set(c, off);
-        off += c.byteLength;
-      }
-      const remoteFile = remotePath.replace(/\/$/, '') + '/' + fileName;
-      await sftpRef.current.writeFile(remoteFile, data, (n) => {
-        const pct = total ? Math.min(99, Math.floor((n / total) * 100)) : 50;
-        setTransfers((prev) => prev.map((t) => (t.id === id ? { ...t, progress: pct } : t)));
+      const sftp = sftpRef.current;
+      if (!sftp) throw new Error('SFTP is not connected');
+      if (!opfsEngine.supported) throw new Error('OPFS is unavailable; upload cannot start');
+
+      // Metadata and stream come from the same immutable File snapshot, so
+      // progress and the final byte-count check cannot race a local rewrite.
+      const localFile = await opfsEngine.openFileForReading(fileName);
+      updateTransfer(id, { totalBytes: localFile.size });
+
+      const remoteFile = remoteChildPath(remotePath, fileName);
+      const written = await sftp.writeFileStream(remoteFile, localFile.stream, (bytesWritten) => {
+        updateTransfer(id, {
+          transferredBytes: bytesWritten,
+          totalBytes: localFile.size,
+          progress: transferPercent(bytesWritten, localFile.size),
+        });
       });
-      setTransfers((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, progress: 100, status: 'completed' } : t))
-      );
+      if (written !== localFile.size) {
+        throw new Error(`Upload byte count mismatch: expected ${localFile.size}, wrote ${written}`);
+      }
+
+      updateTransfer(id, {
+        progress: 100,
+        transferredBytes: written,
+        totalBytes: localFile.size,
+        status: 'completed',
+      });
       await refreshRemote();
-      setStatusMsg(`Uploaded ${fileName}`);
+      setStatusMsg(`Uploaded ${fileName} · ${formatSize(written)}`);
     } catch (e) {
-      setTransfers((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, status: 'error', progress: 0 } : t))
-      );
+      updateTransfer(id, { status: 'error' });
       setStatusMsg(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
   const handleDownload = async (fileName: string) => {
-    const id = Date.now().toString();
-    pushTransfer({ id, fileName, direction: 'download', progress: 5, status: 'transferring' });
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    pushTransfer({
+      id,
+      fileName,
+      direction: 'download',
+      progress: 0,
+      transferredBytes: 0,
+      totalBytes: 0,
+      status: 'transferring',
+    });
     try {
-      if (!sftpRef.current) throw new Error('SFTP not ready');
-      const remoteFile = remotePath.replace(/\/$/, '') + '/' + fileName;
-      const data = await sftpRef.current.readFile(remoteFile, (n) => {
-        setTransfers((prev) =>
-          prev.map((t) => (t.id === id ? { ...t, progress: Math.min(90, 10 + (n % 80)) } : t))
-        );
+      const sftp = sftpRef.current;
+      if (!sftp) throw new Error('SFTP is not connected');
+      if (!opfsEngine.supported) throw new Error('OPFS is unavailable; download cannot start');
+
+      const remoteFile = remoteChildPath(remotePath, fileName);
+      const attributes = await sftp.stat(remoteFile);
+      let totalBytes = attributes.size;
+      updateTransfer(id, { totalBytes });
+
+      const stream = await sftp.readFileStream(remoteFile, (_bytesRead, reportedTotal) => {
+        if (reportedTotal !== totalBytes) {
+          totalBytes = reportedTotal;
+          updateTransfer(id, { totalBytes });
+        }
       });
-      if (opfsEngine.supported) {
-        const stream = new ReadableStream<Uint8Array>({
-          start(c) {
-            c.enqueue(data);
-            c.close();
-          },
+      const written = await opfsEngine.writeStreamToFile(fileName, stream, (bytesWritten) => {
+        updateTransfer(id, {
+          transferredBytes: bytesWritten,
+          totalBytes,
+          progress: transferPercent(bytesWritten, totalBytes),
         });
-        await opfsEngine.writeStreamToFile(fileName, stream);
+      });
+      if (written !== totalBytes) {
+        throw new Error(`Download byte count mismatch: expected ${totalBytes}, saved ${written}`);
       }
-      setTransfers((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, progress: 100, status: 'completed' } : t))
-      );
+
+      updateTransfer(id, {
+        progress: 100,
+        transferredBytes: written,
+        totalBytes,
+        status: 'completed',
+      });
       await refreshLocal();
-      setStatusMsg(`Downloaded ${fileName} → OPFS`);
+      setStatusMsg(`Downloaded ${fileName} → OPFS · ${formatSize(written)}`);
     } catch (e) {
-      setTransfers((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, status: 'error', progress: 0 } : t))
-      );
+      updateTransfer(id, { status: 'error' });
       setStatusMsg(`Download failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
@@ -275,7 +332,7 @@ export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
       const parent = remotePath.replace(/\/+$/, '').split('/').slice(0, -1).join('/') || '/';
       await refreshRemote(parent || '/');
     } else {
-      const next = remotePath.replace(/\/$/, '') + '/' + file.name;
+      const next = remoteChildPath(remotePath, file.name);
       await refreshRemote(next);
     }
   };
@@ -334,7 +391,7 @@ export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
           <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/80 px-3 py-2 text-xs">
             <div className="flex items-center gap-1.5 font-mono text-[11px] text-cyan-300 flex-1 min-w-0">
               <HardDrive className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
-              <span className="truncate">{localPath}{opfsReady ? '' : ' (demo)'}</span>
+              <span className="truncate">{localPath}{opfsReady ? '' : ' (不可用)'}</span>
             </div>
             <button onClick={() => void refreshLocal()} className="rounded p-1 hover:bg-slate-800 text-slate-400">
               <RefreshCw className="h-3.5 w-3.5" />
@@ -350,6 +407,13 @@ export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/40">
+                {localFiles.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-2 py-6 text-center text-[11px] text-rose-300">
+                      本地 OPFS 存储不可用，请查看顶部错误信息
+                    </td>
+                  </tr>
+                )}
                 {localFiles.map((file, idx) => (
                   <tr key={idx} className="group hover:bg-slate-800/60">
                     <td className="py-2 pl-2 flex items-center gap-2">
@@ -362,7 +426,7 @@ export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
                     </td>
                     <td className="py-2 text-slate-400 text-[11px]">{file.size}</td>
                     <td className="py-2 text-right pr-2">
-                      {!file.isDir && file.name !== '..' && !file.name.startsWith('(') && sftpReady && (
+                      {!file.isDir && file.name !== '..' && opfsReady && sftpReady && (
                         <button
                           onClick={() => void handleUpload(file.name)}
                           className="rounded p-1 text-slate-400 hover:bg-emerald-500/20 hover:text-emerald-300"
@@ -461,7 +525,7 @@ export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
             <Clock className="h-3.5 w-3.5 text-cyan-400" />
             传输队列 ({transfers.length})
           </span>
-          <span className="text-[10px] text-slate-500">Real SFTP over SSH2 · OPFS local pane</span>
+          <span className="text-[10px] text-slate-500">SFTP v3 · 流式传输 · OPFS 本地文件区</span>
         </div>
         <div className="space-y-2 overflow-y-auto max-h-16">
           {transfers.length === 0 ? (
@@ -493,7 +557,9 @@ export const SftpView: React.FC<Props> = ({ tab, relayUrl }) => {
                       style={{ width: `${t.progress}%` }}
                     />
                   </div>
-                  <span className="w-8 text-right text-[10px] text-slate-400">{t.progress}%</span>
+                  <span className="w-32 text-right text-[10px] text-slate-400">
+                    {formatSize(t.transferredBytes)} / {formatSize(t.totalBytes)} · {t.progress}%
+                  </span>
                   {t.status === 'completed' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
                   {t.status === 'error' && <AlertCircle className="h-3.5 w-3.5 text-rose-400" />}
                 </div>

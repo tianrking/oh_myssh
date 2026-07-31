@@ -13,32 +13,66 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 
 const PATH = '/__ohmyssh_tcp';
+const MAX_FRAME_BYTES = 256 * 1024;
+const MAX_BUFFERED_BYTES = 1024 * 1024;
+
+export function isAllowedRelayOrigin(origin: string | undefined, hostHeader: string): boolean {
+  if (!origin) return false;
+  try {
+    const parsed = new URL(origin);
+    return ['http:', 'https:'].includes(parsed.protocol) && parsed.host === hostHeader;
+  } catch {
+    return false;
+  }
+}
+
+export function parseRelayTarget(
+  requestUrl: string,
+  hostHeader: string,
+): { host: string; port: number } | null {
+  const url = new URL(requestUrl, `http://${hostHeader}`);
+  if (url.pathname !== PATH) return null;
+  const host = (url.searchParams.get('host') || '').trim();
+  const rawPort = url.searchParams.get('port') || '22';
+  if (
+    !host ||
+    host.length > 253 ||
+    /[\s/@?#]/u.test(host) ||
+    !/^\d{1,5}$/u.test(rawPort)
+  ) {
+    throw new Error('Invalid relay target');
+  }
+  const port = Number(rawPort);
+  if (port < 1 || port > 65535) throw new Error('Invalid relay target');
+  return { host, port };
+}
 
 function attachRelay(httpServer: NonNullable<ViteDevServer['httpServer']>) {
-  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+  const wss = new WebSocketServer({
+    noServer: true,
+    perMessageDeflate: false,
+    maxPayload: MAX_FRAME_BYTES,
+  });
 
   const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     try {
       const hostHeader = req.headers.host || 'localhost';
-      const url = new URL(req.url || '/', `http://${hostHeader}`);
-      if (url.pathname !== PATH) return;
-
-      const targetHost = url.searchParams.get('host') || '';
-      const targetPort = parseInt(url.searchParams.get('port') || '22', 10);
-
-      if (!targetHost || !Number.isFinite(targetPort) || targetPort < 1 || targetPort > 65535) {
-        socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+      const target = parseRelayTarget(req.url || '/', hostHeader);
+      if (!target) return;
+      // Prevent unrelated websites from using a developer's localhost Vite server
+      // as a private-network TCP pivot.
+      if (!isAllowedRelayOrigin(req.headers.origin, hostHeader)) {
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
       }
 
-      // Basic SSRF guard: block obviously local-only targets in production-like envs if needed.
-      // Dev tool is intentional for connecting to user-chosen hosts including private LAN.
       wss.handleUpgrade(req, socket, head, (ws) => {
-        pipeWsToTcp(ws, targetHost, targetPort);
+        pipeWsToTcp(ws, target.host, target.port);
       });
     } catch {
       try {
+        socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
         socket.destroy();
       } catch {
         /* ignore */
@@ -57,10 +91,12 @@ function attachRelay(httpServer: NonNullable<ViteDevServer['httpServer']>) {
 function pipeWsToTcp(ws: WebSocket, host: string, port: number) {
   const tcp = net.connect({ host, port, noDelay: true });
   let closed = false;
+  const connectTimer = setTimeout(() => shutdown(new Error('TCP connect timeout')), 10_000);
 
   const shutdown = (err?: Error) => {
     if (closed) return;
     closed = true;
+    clearTimeout(connectTimer);
     try {
       tcp.destroy(err);
     } catch {
@@ -76,12 +112,18 @@ function pipeWsToTcp(ws: WebSocket, host: string, port: number) {
   };
 
   tcp.on('connect', () => {
-    // ready
+    clearTimeout(connectTimer);
   });
 
   tcp.on('data', (chunk: Buffer) => {
     if (ws.readyState === ws.OPEN) {
-      ws.send(chunk, { binary: true });
+      if (ws.bufferedAmount > MAX_BUFFERED_BYTES) {
+        shutdown(new Error('WebSocket output buffer exceeded'));
+        return;
+      }
+      ws.send(chunk, { binary: true }, (error) => {
+        if (error) shutdown(error);
+      });
     }
   });
 
@@ -90,11 +132,19 @@ function pipeWsToTcp(ws: WebSocket, host: string, port: number) {
 
   ws.on('message', (data, isBinary) => {
     if (tcp.destroyed) return;
+    if (!isBinary) {
+      shutdown(new Error('Binary frames required'));
+      return;
+    }
     const buf = Buffer.isBuffer(data)
       ? data
       : Buffer.from(data as ArrayBuffer);
-    if (!isBinary && typeof data === 'string') {
-      tcp.write(Buffer.from(data));
+    if (buf.byteLength === 0 || buf.byteLength > MAX_FRAME_BYTES) {
+      shutdown(new Error('Invalid relay frame size'));
+      return;
+    }
+    if (tcp.writableLength + buf.byteLength > MAX_BUFFERED_BYTES) {
+      shutdown(new Error('TCP output buffer exceeded'));
       return;
     }
     tcp.write(buf);

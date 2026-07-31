@@ -1,0 +1,37 @@
+name = "oh-myssh-relay"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+workers_dev = true
+
+[vars]
+ALLOWED_ORIGINS = "https://oh-myssh.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
+ALLOWED_PORTS = "22,2222"
+ALLOWED_HOSTS = ""
+TICKETS_PER_MINUTE = "10"
+MAX_SESSIONS_PER_IP = "4"
+TICKET_TTL_SECONDS = "30"
+CONNECT_TIMEOUT_MS = "10000"
+IDLE_TIMEOUT_SECONDS = "900"
+MAX_SESSION_SECONDS = "14400"
+MAX_BYTES_PER_DIRECTION = "1073741824"
+MAX_FRAME_BYTES = "262144"
+MAX_QUEUED_BYTES = "1048576"
+
+[[durable_objects.bindings]]
+name = "SESSIONS"
+class_name = "RelaySession"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITS"
+class_name = "RateLimit"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelaySession", "RateLimit"]
+
+[secrets]
+required = ["ACCESS_TOKEN"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1

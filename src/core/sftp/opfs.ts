@@ -1,6 +1,9 @@
 /**
- * Oh My SSH - OPFS (Origin Private File System) stream engine
- * Local pane backing store for dual-pane SFTP offline workspace.
+ * Origin Private File System storage used by the local SFTP pane.
+ *
+ * Every public operation is fail-closed: unsupported browsers, missing files,
+ * permission failures, and write failures reject instead of draining or
+ * returning placeholder data that could be mistaken for a successful transfer.
  */
 
 export type OpfsListEntry = {
@@ -10,148 +13,211 @@ export type OpfsListEntry = {
   updatedAt: number;
 };
 
-export class OPFSEngine {
-  private isSupported: boolean;
+export type OpfsFileInfo = {
+  name: string;
+  size: number;
+  updatedAt: number;
+};
 
+export type OpfsReadableFile = OpfsFileInfo & {
+  stream: ReadableStream<Uint8Array>;
+};
+
+export interface OpfsStorageProvider {
+  getDirectory(): Promise<FileSystemDirectoryHandle>;
+}
+
+export class OPFSError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'OPFSError';
+  }
+}
+
+export class OPFSUnavailableError extends OPFSError {
   constructor() {
-    this.isSupported =
-      typeof navigator !== 'undefined' &&
-      'storage' in navigator &&
-      typeof navigator.storage?.getDirectory === 'function';
+    super('Origin Private File System is not supported in this browser');
+    this.name = 'OPFSUnavailableError';
+  }
+}
+
+function asOpfsError(message: string, cause: unknown): OPFSError {
+  return cause instanceof OPFSError ? cause : new OPFSError(message, { cause });
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'name' in error && error.name === 'NotFoundError';
+}
+
+export class OPFSEngine {
+  constructor(private readonly storageOverride?: OpfsStorageProvider | null) {}
+
+  private storageProvider(): OpfsStorageProvider | null {
+    if (this.storageOverride !== undefined) return this.storageOverride;
+    if (
+      typeof navigator === 'undefined' ||
+      !('storage' in navigator) ||
+      typeof navigator.storage?.getDirectory !== 'function'
+    ) {
+      return null;
+    }
+    return navigator.storage;
   }
 
   public get supported(): boolean {
-    return this.isSupported;
+    return this.storageProvider() !== null;
+  }
+
+  private async rootDirectory(): Promise<FileSystemDirectoryHandle> {
+    const storage = this.storageProvider();
+    if (!storage) throw new OPFSUnavailableError();
+    try {
+      return await storage.getDirectory();
+    } catch (cause) {
+      throw asOpfsError('Unable to access Origin Private File System', cause);
+    }
+  }
+
+  private async fileSnapshot(filename: string): Promise<File> {
+    const root = await this.rootDirectory();
+    try {
+      const handle = await root.getFileHandle(filename);
+      return await handle.getFile();
+    } catch (cause) {
+      throw asOpfsError(`Unable to read local file: ${filename}`, cause);
+    }
+  }
+
+  public async statFile(filename: string): Promise<OpfsFileInfo> {
+    const file = await this.fileSnapshot(filename);
+    return { name: filename, size: file.size, updatedAt: file.lastModified };
+  }
+
+  public async openFileForReading(filename: string): Promise<OpfsReadableFile> {
+    const file = await this.fileSnapshot(filename);
+    if (typeof file.stream !== 'function') {
+      throw new OPFSError(`Streaming reads are unavailable for local file: ${filename}`);
+    }
+    return {
+      name: filename,
+      size: file.size,
+      updatedAt: file.lastModified,
+      stream: file.stream() as ReadableStream<Uint8Array>,
+    };
   }
 
   public async writeStreamToFile(
     filename: string,
     stream: ReadableStream<Uint8Array>,
-    onProgress?: (bytesWritten: number) => void
+    onProgress?: (bytesWritten: number) => void,
   ): Promise<number> {
-    let totalWritten = 0;
-
-    if (this.isSupported) {
+    const root = await this.rootDirectory();
+    let writable: FileSystemWritableFileStream;
+    let createdFile = false;
+    try {
+      let fileHandle: FileSystemFileHandle;
       try {
-        const root = await navigator.storage.getDirectory();
-        const fileHandle = await root.getFileHandle(filename, { create: true });
-        const writable = await fileHandle.createWritable();
-        const reader = stream.getReader();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            // Copy into a plain ArrayBuffer-backed view for FileSystemWritableFileStream
-            const copy = new Uint8Array(value.byteLength);
-            copy.set(value);
-            await writable.write(copy);
-            totalWritten += value.byteLength;
-            onProgress?.(totalWritten);
-          }
-        }
-        await writable.close();
-        return totalWritten;
-      } catch (e) {
-        console.warn('OPFS write failed, falling back to memory drain', e);
+        fileHandle = await root.getFileHandle(filename);
+      } catch (cause) {
+        if (!isNotFoundError(cause)) throw cause;
+        fileHandle = await root.getFileHandle(filename, { create: true });
+        createdFile = true;
       }
+      writable = await fileHandle.createWritable();
+    } catch (cause) {
+      if (createdFile) await root.removeEntry(filename).catch(() => undefined);
+      throw asOpfsError(`Unable to open local file for writing: ${filename}`, cause);
     }
 
     const reader = stream.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        totalWritten += value.byteLength;
+    let totalWritten = 0;
+    let committed = false;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+
+        // Do not pass a view backed by a larger SSH packet buffer to OPFS.
+        const copy = new Uint8Array(value.byteLength);
+        copy.set(value);
+        await writable.write(copy);
+        totalWritten += copy.byteLength;
         onProgress?.(totalWritten);
       }
+      await writable.close();
+      committed = true;
+      return totalWritten;
+    } catch (cause) {
+      // Cancelling propagates to SftpClient.readFileStream(), which closes the
+      // remote handle instead of continuing to download bytes we cannot save.
+      await reader.cancel(cause).catch(() => undefined);
+      if (!committed) await writable.abort(cause).catch(() => undefined);
+      if (createdFile) await root.removeEntry(filename).catch(() => undefined);
+      throw asOpfsError(`Failed to write local file: ${filename}`, cause);
+    } finally {
+      reader.releaseLock();
     }
-    return totalWritten;
   }
 
   public async readStreamFromFile(filename: string): Promise<ReadableStream<Uint8Array>> {
-    if (this.isSupported) {
-      try {
-        const root = await navigator.storage.getDirectory();
-        const fileHandle = await root.getFileHandle(filename);
-        const file = await fileHandle.getFile();
-        if (typeof file.stream === 'function') {
-          return file.stream();
-        }
-      } catch (e) {
-        console.warn('OPFS read failed', e);
-      }
-    }
-
-    return new ReadableStream<Uint8Array>({
-      start(ctrl) {
-        ctrl.close();
-      },
-    });
+    return (await this.openFileForReading(filename)).stream;
   }
 
-  /** List entries under OPFS root (or nested relative path). */
+  /** List entries under the OPFS root (or a nested relative path). */
   public async listDirectory(relativePath = ''): Promise<OpfsListEntry[]> {
-    if (!this.isSupported) return [];
-
+    const root = await this.rootDirectory();
     try {
-      const root = await navigator.storage.getDirectory();
-      let dir: FileSystemDirectoryHandle = root;
+      let directory: FileSystemDirectoryHandle = root;
       const parts = relativePath.split('/').filter(Boolean);
       for (const part of parts) {
-        dir = await dir.getDirectoryHandle(part);
+        directory = await directory.getDirectoryHandle(part);
       }
 
       const entries: OpfsListEntry[] = [];
-      // @ts-expect-error async iterator on directory handle
-      for await (const [name, handle] of dir.entries()) {
+      // @ts-expect-error FileSystemDirectoryHandle async iteration is supported by Chromium.
+      for await (const [name, handle] of directory.entries()) {
         if (handle.kind === 'directory') {
-          entries.push({ name, isDir: true, size: 0, updatedAt: Date.now() });
-        } else {
-          try {
-            const file = await handle.getFile();
-            entries.push({
-              name,
-              isDir: false,
-              size: file.size,
-              updatedAt: file.lastModified,
-            });
-          } catch {
-            entries.push({ name, isDir: false, size: 0, updatedAt: Date.now() });
-          }
+          entries.push({ name, isDir: true, size: 0, updatedAt: 0 });
+          continue;
+        }
+        try {
+          const file = await handle.getFile();
+          entries.push({
+            name,
+            isDir: false,
+            size: file.size,
+            updatedAt: file.lastModified,
+          });
+        } catch (cause) {
+          throw asOpfsError(`Unable to read local file metadata: ${name}`, cause);
         }
       }
-      return entries.sort((a, b) => {
-        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-        return a.name.localeCompare(b.name);
+      return entries.sort((left, right) => {
+        if (left.isDir !== right.isDir) return left.isDir ? -1 : 1;
+        return left.name.localeCompare(right.name);
       });
-    } catch (e) {
-      console.warn('OPFS list failed', e);
-      return [];
+    } catch (cause) {
+      throw asOpfsError(`Unable to list local directory: ${relativePath || '/'}`, cause);
     }
   }
 
   public async writeTextFile(filename: string, content: string): Promise<void> {
     const bytes = new TextEncoder().encode(content);
     const stream = new ReadableStream<Uint8Array>({
-      start(ctrl) {
-        ctrl.enqueue(bytes);
-        ctrl.close();
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
       },
     });
     await this.writeStreamToFile(filename, stream);
   }
 
   public async ensureDemoFiles(): Promise<void> {
-    if (!this.isSupported) return;
-    try {
-      const existing = await this.listDirectory();
-      if (existing.length > 0) return;
-      await this.writeTextFile('release_notes.txt', 'Oh My SSH offline workspace\n');
-      await this.writeTextFile('deploy.sh', '#!/bin/bash\necho deploy\n');
-    } catch {
-      /* ignore */
-    }
+    const existing = await this.listDirectory();
+    if (existing.length > 0) return;
+    await this.writeTextFile('release_notes.txt', 'Oh My SSH offline workspace\n');
+    await this.writeTextFile('deploy.sh', '#!/bin/bash\necho deploy\n');
   }
 }
 

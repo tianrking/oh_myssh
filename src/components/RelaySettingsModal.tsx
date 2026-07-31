@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Network, ShieldAlert, Check } from 'lucide-react';
 import { t } from '../core/i18n';
 
@@ -6,22 +6,31 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   currentRelayUrl: string;
-  onSaveRelayUrl: (url: string) => void;
+  currentAccessToken: string;
+  onSaveRelay: (url: string, accessToken: string) => void;
 }
 
 export const RelaySettingsModal: React.FC<Props> = ({
   isOpen,
   onClose,
   currentRelayUrl,
-  onSaveRelayUrl,
+  currentAccessToken,
+  onSaveRelay,
 }) => {
   const [relayUrl, setRelayUrl] = useState(currentRelayUrl || '');
+  const [accessToken, setAccessToken] = useState(currentAccessToken || '');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setRelayUrl(currentRelayUrl || '');
+    setAccessToken(currentAccessToken || '');
+  }, [isOpen, currentRelayUrl, currentAccessToken]);
 
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveRelayUrl(relayUrl.trim());
+    onSaveRelay(relayUrl.trim(), accessToken.trim());
     onClose();
   };
 
@@ -49,12 +58,12 @@ export const RelaySettingsModal: React.FC<Props> = ({
           <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-3 text-slate-300 space-y-1">
             <div className="flex items-center gap-1.5 font-semibold text-slate-200">
               <ShieldAlert className="h-4 w-4 text-slate-400" />
-              <span>高级可选项 · 默认不需要</span>
+              <span>Cloudflare 加密 TCP 中继</span>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              产品默认像 Xshell 一样直连 VPS，不会自动使用任何中继。
-              仅当环境不支持 Direct Sockets、且你明确需要兼容桥接时，才填写下方地址。
-              留空 = 不使用。
+              普通浏览器需要中继才能访问 TCP/22。SSH 握手、主机指纹、密码、私钥和
+              SFTP 都在浏览器内完成；中继只转发 SSH 密文。访问令牌仅保留到当前浏览器
+              标签会话，绝不会写入 Vercel 构建或 URL。
             </p>
           </div>
 
@@ -69,6 +78,23 @@ export const RelaySettingsModal: React.FC<Props> = ({
               placeholder={t('relayUrlPlaceholder')}
               className="w-full rounded-xl border border-slate-700 bg-slate-950/60 p-2.5 font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
             />
+          </div>
+
+          <div>
+            <label className="block text-slate-400 mb-1.5 font-medium">
+              中继访问令牌
+            </label>
+            <input
+              type="password"
+              value={accessToken}
+              onChange={(event) => setAccessToken(event.target.value)}
+              placeholder="Cloudflare ACCESS_TOKEN"
+              autoComplete="off"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950/60 p-2.5 font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
+            />
+            <p className="mt-1.5 text-[10px] text-slate-500">
+              建议填写 https://your-relay.workers.dev；不要把令牌放进 URL 或 VITE_* 环境变量。
+            </p>
           </div>
 
           <div className="flex justify-end gap-3 pt-3">

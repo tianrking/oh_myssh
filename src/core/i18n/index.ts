@@ -70,7 +70,7 @@ const en: Record<string, string> = {
 
   // Welcome Page
   welcomeTitle: 'Oh My SSH Workspace Ready',
-  welcomeSub: 'Pure client-side WebSSH & SFTP experience. Connect directly to TCP/22 via Direct Sockets in Chromium IWA. Credentials stay 100% local.',
+  welcomeSub: 'Browser-side SSH and SFTP over a ciphertext-only Cloudflare TCP relay, with strict host-key verification. Credentials stay in this browser session.',
   newConnection: 'New Connection',
 
   // Session & Toolbar
@@ -89,12 +89,12 @@ const en: Record<string, string> = {
   saveProperties: 'Save Properties',
 
   // Relay Settings Modal
-  relaySettingsTitle: 'WebSocket SSH Relay Proxy',
-  relaySettingsSub: 'Configure gateway for connecting to real SSH servers in web mode',
+  relaySettingsTitle: 'Cloudflare SSH TCP Relay',
+  relaySettingsSub: 'Configure the authenticated ciphertext-only relay used by HTTPS deployments',
   relayWarningTitle: 'Web Environment Limitation',
-  relayWarningBody: 'Due to W3C security restrictions, web pages cannot initiate raw TCP connections. To connect to real servers in web mode, install as a Chromium Isolated Web App (IWA) or configure a WebSocket Relay gateway (e.g. wss://relay.yourdomain.com/ssh) here.',
-  relayUrlLabel: 'WebSocket Relay Gateway URL',
-  relayUrlPlaceholder: 'wss://relay.ohmyssh.local/ssh',
+  relayWarningBody: 'Standard web pages cannot initiate raw TCP connections. Deploy the bundled authenticated Cloudflare Worker relay, then enter its HTTPS base URL and access token here. SSH credentials remain in this browser session.',
+  relayUrlLabel: 'Cloudflare Worker base URL',
+  relayUrlPlaceholder: 'https://your-relay.workers.dev',
   applyRelay: 'Apply Relay Config',
 
   // Snippet Manager
@@ -128,7 +128,7 @@ const en: Record<string, string> = {
   connectErrorReasonText: 'Browser W3C security spec prohibits web pages from making raw TCP connections.',
   connectErrorSolutions: 'To connect to any real external SSH server, choose one of these solutions:',
   connectErrorSolution1: 'Chromium IWA Mode: Launch in a Chromium IWA with Direct Sockets support.',
-  connectErrorSolution2: 'Configure WebSocket Relay: Click the "Relay" button at top to configure your gateway (e.g. wss://your-relay/ssh).',
+  connectErrorSolution2: 'Configure Cloudflare Relay: Click the relay button and enter your Worker HTTPS base URL plus access token.',
   connectErrorSolution3: 'Try Demo Mode: Select a preset "Dev Test Server" in the sidebar for the built-in shell.',
 
   // DirectSockets indicator
@@ -197,7 +197,7 @@ const zhCN: Record<string, string> = {
 
   // Welcome Page
   welcomeTitle: 'Oh My SSH 工作区已就绪',
-  welcomeSub: '真正的纯前端 SSH / SFTP 体验。在 Chromium IWA 中通过 Direct Sockets 直接连接目标 TCP/22，数据与私钥永久留在本地。',
+  welcomeSub: 'SSH 加密、认证与 SFTP 均在浏览器执行；Cloudflare 中继只转发 SSH 密文，并严格校验服务器主机指纹。',
   newConnection: '发起新连接',
 
   // Session & Toolbar
@@ -216,12 +216,12 @@ const zhCN: Record<string, string> = {
   saveProperties: '保存属性',
 
   // Relay Settings Modal
-  relaySettingsTitle: 'WebSocket SSH Relay 中继代理',
-  relaySettingsSub: '在普通网页模式下配置连接真实 SSH 服务器的网关',
+  relaySettingsTitle: 'Cloudflare SSH TCP 中继',
+  relaySettingsSub: '配置 HTTPS 部署使用的鉴权密文中继',
   relayWarningTitle: '纯前端网络限制提示',
-  relayWarningBody: '根据 W3C 安全限制，普通网页不能直接发起原始 TCP 连接。若要在普通网页中直连真实服务器，请安装为 Chromium Isolated Web App (IWA)，或在此处配置自建的 WebSocket Relay 网关（如 wss://relay.yourdomain.com/ssh）。',
-  relayUrlLabel: 'WebSocket Relay 网关地址 (WebSocket Gateway URL)',
-  relayUrlPlaceholder: 'wss://relay.ohmyssh.local/ssh',
+  relayWarningBody: '普通网页不能直接发起原始 TCP 连接。请先部署仓库内置的鉴权 Cloudflare Worker 中继，再在这里填写 Worker 的 HTTPS 基础地址和访问令牌；SSH 凭据只留在当前浏览器会话。',
+  relayUrlLabel: 'Cloudflare Worker 基础地址',
+  relayUrlPlaceholder: 'https://your-relay.workers.dev',
   applyRelay: '应用 Relay 配置',
 
   // Snippet Manager
@@ -255,7 +255,7 @@ const zhCN: Record<string, string> = {
   connectErrorReasonText: '浏览器 W3C 安全规范禁止普通网页直接发起原始 TCP 连接。',
   connectErrorSolutions: '要连接任意真实的外部 SSH 服务器，请选择以下任一解决方案：',
   connectErrorSolution1: 'Chromium IWA 模式：在支持 Direct Sockets 的 Chromium IWA 中启动包文件。',
-  connectErrorSolution2: '配置 WebSocket Relay：点击顶部 "Relay" 按钮配置自建网关（如 wss://your-relay/ssh）。',
+  connectErrorSolution2: '配置 Cloudflare Relay：点击顶部中继按钮，填写 Worker HTTPS 基础地址和访问令牌。',
   connectErrorSolution3: '体验 Demo 环境：在侧边栏选择预置的"开发测试机"体验内置 Shell。',
 
   // DirectSockets indicator
@@ -324,7 +324,7 @@ const esES: Record<string, string> = {
 
   // Welcome Page
   welcomeTitle: 'Oh My SSH — Espacio de trabajo listo',
-  welcomeSub: 'Experiencia WebSSH y SFTP completamente en el cliente. Conéctese directamente a TCP/22 con Direct Sockets en Chromium IWA. Las credenciales permanecen 100% locales.',
+  welcomeSub: 'SSH y SFTP se ejecutan en el navegador mediante un relé Cloudflare que solo transporta texto cifrado, con verificación estricta de la clave del host.',
   newConnection: 'Nueva conexión',
 
   // Session & Toolbar
@@ -343,12 +343,12 @@ const esES: Record<string, string> = {
   saveProperties: 'Guardar propiedades',
 
   // Relay Settings Modal
-  relaySettingsTitle: 'Proxy Relay SSH por WebSocket',
-  relaySettingsSub: 'Configure la puerta de enlace para conectarse a servidores SSH reales en modo web',
+  relaySettingsTitle: 'Relé TCP SSH de Cloudflare',
+  relaySettingsSub: 'Configure el relé autenticado que solo transporta tráfico SSH cifrado',
   relayWarningTitle: 'Limitación del entorno web',
-  relayWarningBody: 'Debido a restricciones de seguridad W3C, las páginas web no pueden iniciar conexiones TCP directas. Para conectarse a servidores reales en modo web, instale como Chromium Isolated Web App (IWA) o configure una puerta de enlace WebSocket Relay (ej. wss://relay.yourdomain.com/ssh) aquí.',
-  relayUrlLabel: 'URL de la puerta de enlace WebSocket Relay',
-  relayUrlPlaceholder: 'wss://relay.ohmyssh.local/ssh',
+  relayWarningBody: 'Las páginas web normales no pueden iniciar conexiones TCP directas. Despliegue el Worker de Cloudflare autenticado incluido y escriba aquí su URL base HTTPS y el token; las credenciales SSH permanecen en esta sesión del navegador.',
+  relayUrlLabel: 'URL base del Worker de Cloudflare',
+  relayUrlPlaceholder: 'https://your-relay.workers.dev',
   applyRelay: 'Aplicar configuración Relay',
 
   // Snippet Manager
@@ -382,7 +382,7 @@ const esES: Record<string, string> = {
   connectErrorReasonText: 'La especificación de seguridad W3C del navegador prohíbe las conexiones TCP directas desde páginas web.',
   connectErrorSolutions: 'Para conectarse a cualquier servidor SSH externo real, elija una de estas soluciones:',
   connectErrorSolution1: 'Modo Chromium IWA: Inicie en un Chromium IWA con soporte de Direct Sockets.',
-  connectErrorSolution2: 'Configurar WebSocket Relay: Haga clic en el botón "Relay" en la parte superior para configurar su puerta de enlace (ej. wss://your-relay/ssh).',
+  connectErrorSolution2: 'Configurar Cloudflare Relay: escriba la URL base HTTPS de su Worker y el token de acceso.',
   connectErrorSolution3: 'Probar modo Demo: Seleccione un "Servidor de prueba" preconfigurado en la barra lateral para el shell integrado.',
 
   // DirectSockets indicator

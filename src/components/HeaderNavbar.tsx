@@ -63,7 +63,7 @@ export const HeaderNavbar: React.FC<Props> = ({
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-100 text-sm tracking-wide">{t('appName')}</span>
             <span className="rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-mono font-medium text-cyan-400">
-              v0.1.0 WASM
+              v0.2.0 Secure Relay
             </span>
           </div>
           <span className="text-[10px] text-slate-400 block -mt-0.5">
@@ -86,10 +86,10 @@ export const HeaderNavbar: React.FC<Props> = ({
 
       {/* Right Capabilities & Actions */}
       <div className="flex items-center gap-2">
-        {/* Advanced optional bridge — not the default path */}
+        {/* Relay settings used by ordinary HTTPS deployments. */}
         <button
           onClick={onOpenRelaySettings}
-          title="高级：可选 TCP 桥（默认不需要，直连优先）"
+          title="配置 Cloudflare 加密 TCP 中继"
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800 bg-slate-900/60 text-slate-500 hover:border-slate-600 hover:text-slate-300 transition-all opacity-70"
         >
           <Network className="h-4 w-4" />
@@ -145,7 +145,7 @@ export const HeaderNavbar: React.FC<Props> = ({
 
         {/* DirectSockets Runtime Indicator */}
         <div
-          title="纯前端静态站 · 可托管 Vercel · 真实 SSH 需浏览器 Direct Sockets 或可选外部网关"
+          title="Vercel 静态 UI · 真实 SSH 使用浏览器 Direct Sockets 或 Cloudflare 加密中继"
           className="hidden lg:flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-1 text-[11px] font-mono"
         >
           <span className="h-2 w-2 rounded-full bg-cyan-400" />

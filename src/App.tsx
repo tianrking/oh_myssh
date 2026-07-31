@@ -3,8 +3,6 @@ import { db, seedInitialDataIfNeeded, type HostProfile, type QuickSnippet } from
 import { HeaderNavbar } from './components/HeaderNavbar';
 import { HostSidebar } from './components/HostSidebar';
 import { WorkspaceTabs, type TabItem } from './components/WorkspaceTabs';
-import { TerminalView } from './components/TerminalView';
-import { SftpView } from './components/SftpView';
 import { QuickConnectModal } from './components/QuickConnectModal';
 import { CommandPalette } from './components/CommandPalette';
 import { SessionPropertiesModal } from './components/SessionPropertiesModal';
@@ -16,8 +14,17 @@ import { t, subscribeLanguageChange } from './core/i18n';
 import { sessionRegistry } from './core/session/registry';
 import { Terminal, HardDrive, Lock, Plus } from 'lucide-react';
 
+const TerminalView = React.lazy(() =>
+  import('./components/TerminalView').then((module) => ({ default: module.TerminalView })),
+);
+const SftpView = React.lazy(() =>
+  import('./components/SftpView').then((module) => ({ default: module.SftpView })),
+);
+
 const RELAY_STORAGE_KEY = 'ohmyssh.relayUrl';
+const RELAY_TOKEN_SESSION_KEY = 'ohmyssh.relayAccessToken';
 const THEME_STORAGE_KEY = 'ohmyssh.theme';
+type QuickConnectIntent = { mode: 'ssh' | 'sftp'; host?: HostProfile };
 
 export function App() {
   const [hosts, setHosts] = useState<HostProfile[]>([]);
@@ -26,6 +33,7 @@ export function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
 
   const [isQuickConnectOpen, setIsQuickConnectOpen] = useState(false);
+  const [quickConnectIntent, setQuickConnectIntent] = useState<QuickConnectIntent>({ mode: 'ssh' });
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isPropertiesOpen, setIsPropertiesOpen] = useState(false);
   const [isBroadcastOpen, setIsBroadcastOpen] = useState(false);
@@ -35,6 +43,13 @@ export function App() {
   const [relayUrl, setRelayUrl] = useState(() => {
     try {
       return localStorage.getItem(RELAY_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
+  const [relayAccessToken, setRelayAccessToken] = useState(() => {
+    try {
+      return sessionStorage.getItem(RELAY_TOKEN_SESSION_KEY) || '';
     } catch {
       return '';
     }
@@ -108,6 +123,7 @@ export function App() {
         // Credentials stay in-memory for this session tab only (like Xshell session)
         password: host.password,
         privateKey: host.privateKey,
+        privateKeyPassphrase: host.passphrase,
         forceOffline: isOffline,
         splitMode: 'none',
       };
@@ -118,20 +134,25 @@ export function App() {
     []
   );
 
-  const handleOpenSFTP = useCallback((host: HostProfile) => {
-    // SFTP needs credentials — prompt via quick connect if missing
+  const handleOpenSFTP = useCallback((host: HostProfile | Partial<HostProfile>) => {
     const newTab: TabItem = {
       id: 'sftp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-      title: `[SFTP] ${host.name}`,
+      title: `[SFTP] ${host.name || `${host.username}@${host.host}`}`,
       type: 'sftp',
-      host: host.host,
-      port: host.port,
-      username: host.username,
+      host: host.host || '127.0.0.1',
+      port: host.port || 22,
+      username: host.username || 'root',
       password: host.password,
       privateKey: host.privateKey,
+      privateKeyPassphrase: host.passphrase,
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newTab.id);
+  }, []);
+
+  const openQuickConnect = useCallback((host?: HostProfile, mode: 'ssh' | 'sftp' = 'ssh') => {
+    setQuickConnectIntent({ host, mode });
+    setIsQuickConnectOpen(true);
   }, []);
 
   const handleCloseTab = useCallback(
@@ -184,9 +205,9 @@ export function App() {
     const ok = sessionRegistry.runOnActive(cmd);
     if (!ok) {
       // If no session, open quick connect
-      setIsQuickConnectOpen(true);
+      openQuickConnect();
     }
-  }, []);
+  }, [openQuickConnect]);
 
   const handleExportLog = useCallback(() => {
     const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -225,10 +246,13 @@ export function App() {
     }
   }, []);
 
-  const handleSaveRelay = useCallback((url: string) => {
+  const handleSaveRelay = useCallback((url: string, accessToken: string) => {
     setRelayUrl(url);
+    setRelayAccessToken(accessToken);
     try {
       localStorage.setItem(RELAY_STORAGE_KEY, url);
+      if (accessToken) sessionStorage.setItem(RELAY_TOKEN_SESSION_KEY, accessToken);
+      else sessionStorage.removeItem(RELAY_TOKEN_SESSION_KEY);
     } catch {
       /* ignore */
     }
@@ -249,7 +273,7 @@ export function App() {
       // Cmd/Ctrl+T — new connection
       if (meta && e.key.toLowerCase() === 't' && !e.shiftKey) {
         e.preventDefault();
-        setIsQuickConnectOpen(true);
+        openQuickConnect();
         return;
       }
 
@@ -283,14 +307,14 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTabId, tabs, handleCloseTab, handleSelectTab]);
+  }, [activeTabId, tabs, handleCloseTab, handleSelectTab, openQuickConnect]);
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
   return (
     <div className="flex h-screen w-screen flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans">
       <HeaderNavbar
-        onOpenQuickConnect={() => setIsQuickConnectOpen(true)}
+        onOpenQuickConnect={() => openQuickConnect()}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         onToggleBroadcast={() => setIsBroadcastOpen((v) => !v)}
         isBroadcastActive={isBroadcastOpen}
@@ -304,9 +328,13 @@ export function App() {
       <div className="flex flex-1 overflow-hidden">
         <HostSidebar
           hosts={hosts}
-          onConnectHost={(h) => void handleConnectHost(h, { save: false })}
-          onOpenSFTP={handleOpenSFTP}
-          onAddHost={() => setIsQuickConnectOpen(true)}
+          onConnectHost={(host) => {
+            const offline = host.host.includes('offline') || host.tags.includes('Offline');
+            if (offline) void handleConnectHost(host, { save: false });
+            else openQuickConnect(host, 'ssh');
+          }}
+          onOpenSFTP={(host) => openQuickConnect(host, 'sftp')}
+          onAddHost={() => openQuickConnect()}
           onDeleteHost={handleDeleteHost}
         />
 
@@ -317,7 +345,7 @@ export function App() {
               activeTabId={activeTabId}
               onSelectTab={handleSelectTab}
               onCloseTab={handleCloseTab}
-              onNewQuickConnect={() => setIsQuickConnectOpen(true)}
+              onNewQuickConnect={() => openQuickConnect()}
               onToggleSplit={handleToggleSplit}
             />
           )}
@@ -336,16 +364,29 @@ export function App() {
                   }}
                   aria-hidden={tab.id !== activeTabId}
                 >
-                  {tab.type === 'ssh' ? (
-                    <TerminalView
-                      tab={tab}
-                      relayUrl={relayUrl}
-                      theme={currentTheme}
-                      isActive={tab.id === activeTabId}
-                    />
-                  ) : (
-                    <SftpView tab={tab} relayUrl={relayUrl} />
-                  )}
+                  <React.Suspense
+                    fallback={
+                      <div className="grid h-full place-items-center bg-slate-950 text-xs text-slate-400">
+                        正在加载安全连接组件…
+                      </div>
+                    }
+                  >
+                    {tab.type === 'ssh' ? (
+                      <TerminalView
+                        tab={tab}
+                        relayUrl={relayUrl}
+                        relayAccessToken={relayAccessToken}
+                        theme={currentTheme}
+                        isActive={tab.id === activeTabId}
+                      />
+                    ) : (
+                      <SftpView
+                        tab={tab}
+                        relayUrl={relayUrl}
+                        relayAccessToken={relayAccessToken}
+                      />
+                    )}
+                  </React.Suspense>
                 </div>
               ))}
             </div>
@@ -373,8 +414,8 @@ export function App() {
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                   <Lock className="h-5 w-5 text-emerald-400 mb-2" />
-                  <h4 className="text-xs font-semibold text-slate-200">加密 Vault</h4>
-                  <p className="text-[11px] text-slate-500 mt-1">AES-256-GCM 本地凭据</p>
+                  <h4 className="text-xs font-semibold text-slate-200">严格主机校验</h4>
+                  <p className="text-[11px] text-slate-500 mt-1">TOFU 指纹变化阻断</p>
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                   <HardDrive className="h-5 w-5 text-purple-400 mb-2" />
@@ -384,7 +425,7 @@ export function App() {
               </div>
 
               <button
-                onClick={() => setIsQuickConnectOpen(true)}
+                onClick={() => openQuickConnect()}
                 className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2.5 text-xs font-semibold text-white shadow-xl shadow-cyan-500/25 hover:from-cyan-400 hover:to-blue-500 transition-all active:scale-[0.98]"
               >
                 <Plus className="h-4 w-4" /> {t('newConnection')}
@@ -404,7 +445,17 @@ export function App() {
       <QuickConnectModal
         isOpen={isQuickConnectOpen}
         onClose={() => setIsQuickConnectOpen(false)}
-        onConnect={(profile) => void handleConnectHost(profile, { save: true })}
+        initialProfile={quickConnectIntent.host}
+        connectionType={quickConnectIntent.mode}
+        onConnect={(profile) => {
+          const merged = {
+            ...quickConnectIntent.host,
+            ...profile,
+            name: quickConnectIntent.host?.name || profile.name,
+          };
+          if (quickConnectIntent.mode === 'sftp') handleOpenSFTP(merged);
+          else void handleConnectHost(merged, { save: !quickConnectIntent.host?.id });
+        }}
       />
 
       <CommandPalette
@@ -443,7 +494,8 @@ export function App() {
         isOpen={isRelaySettingsOpen}
         onClose={() => setIsRelaySettingsOpen(false)}
         currentRelayUrl={relayUrl}
-        onSaveRelayUrl={handleSaveRelay}
+        currentAccessToken={relayAccessToken}
+        onSaveRelay={handleSaveRelay}
       />
     </div>
   );

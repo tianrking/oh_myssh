@@ -10,18 +10,19 @@ interface Props {
   tab: TabItem;
   /** Optional advanced bridge only — never required */
   relayUrl?: string;
+  relayAccessToken?: string;
   theme?: string;
   isActive?: boolean;
 }
 
 function modeLabel(mode: string): string {
   switch (mode) {
-    case 'webssh-gateway':
-      return 'WebSSH Gateway';
+    case 'cloudflare-relay':
+      return 'Encrypted CF Relay';
+    case 'local-relay':
+      return 'Local Dev Relay';
     case 'direct':
-      return 'SSH2 Direct';
-    case 'optional-bridge':
-      return 'SSH2 (Advanced)';
+      return 'Direct TCP SSH';
     case 'offline':
       return 'Offline Shell';
     default:
@@ -40,6 +41,7 @@ function isOfflineHost(tab: TabItem): boolean {
 export const TerminalView: React.FC<Props> = ({
   tab,
   relayUrl,
+  relayAccessToken,
   theme = 'cyberpunk',
   isActive = true,
 }) => {
@@ -48,13 +50,14 @@ export const TerminalView: React.FC<Props> = ({
   const engineRef1 = useRef<TerminalEngine | null>(null);
   const engineRef2 = useRef<TerminalEngine | null>(null);
   const sshRef = useRef<SshShellSession | null>(null);
+  const sshRef2 = useRef<SshShellSession | null>(null);
 
   const [currentTheme, setCurrentTheme] = useState(theme);
   const [transportName, setTransportName] = useState('Connecting…');
   const [connectionMode, setConnectionMode] = useState<string>('connecting');
   const [connectedTime, setConnectedTime] = useState('');
   const [useWebGL, setUseWebGL] = useState(true);
-  const [status, setStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [status, setStatus] = useState<'connecting' | 'connected' | 'closed' | 'error'>('connecting');
   const [statusLine, setStatusLine] = useState('');
 
   useEffect(() => {
@@ -125,10 +128,7 @@ export const TerminalView: React.FC<Props> = ({
       }
       engine1.terminal.writeln('');
       engine1.terminal.writeln(
-        ' \x1b[36m用法\x1b[0m  本地: \x1b[1mnpm run dev:with-gateway\x1b[0m 后快速连接即可（经网关，非浏览器直连）。'
-      );
-      engine1.terminal.writeln(
-        '       或自建免费网关，构建时设 VITE_SSH_GATEWAY=wss://你的网关/ssh'
+        ' \x1b[36m用法\x1b[0m  本地运行 \x1b[1mnpm run dev\x1b[0m，或在「中继设置」填写 Cloudflare Relay。'
       );
       engine1.terminal.writeln('');
     };
@@ -157,13 +157,20 @@ export const TerminalView: React.FC<Props> = ({
             username: tab.username,
             password: tab.password,
             privateKeyPem: tab.privateKey,
+            privateKeyPassphrase: tab.privateKeyPassphrase,
           },
-          // Default: WebSSH gateway. Advanced raw bridge only if user set it.
           relayUrl: relayUrl?.trim() || undefined,
+          relayAccessToken,
           cols: 120,
           rows: 40,
           onStatus: (msg) => {
             if (!cancelled) setStatusLine(msg);
+          },
+          onClosed: (message) => {
+            if (cancelled) return;
+            setStatus('closed');
+            setTransportName('SSH Closed');
+            setStatusLine(message);
           },
         });
 
@@ -179,23 +186,11 @@ export const TerminalView: React.FC<Props> = ({
         setStatus('connected');
         setStatusLine('');
         register(
-          ssh.mode === 'webssh-gateway'
-            ? 'relay'
-            : ssh.mode === 'direct'
+          ssh.mode === 'direct'
               ? 'direct'
               : 'relay'
         );
 
-        const fitResize = () => {
-          try {
-            engine1.resize();
-            ssh.resize(engine1.terminal.cols, engine1.terminal.rows);
-          } catch {
-            /* ignore */
-          }
-        };
-        window.addEventListener('resize', fitResize);
-        (ssh as unknown as { _fitResize: () => void })._fitResize = fitResize;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         showConnectError(message);
@@ -215,42 +210,121 @@ export const TerminalView: React.FC<Props> = ({
           /* ignore */
         }
       }
+      const engine2 = engineRef2.current;
+      const ssh2 = sshRef2.current;
+      if (engine2) {
+        engine2.resize();
+        if (ssh2) {
+          try {
+            ssh2.resize(engine2.terminal.cols, engine2.terminal.rows);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
     };
     window.addEventListener('resize', handleResize);
 
     return () => {
       cancelled = true;
       window.removeEventListener('resize', handleResize);
-      const ssh = sshRef.current as (SshShellSession & { _fitResize?: () => void }) | null;
-      if (ssh?._fitResize) {
-        window.removeEventListener('resize', ssh._fitResize);
-      }
       void sshRef.current?.close();
       sshRef.current = null;
       sessionRegistry.unregister(tab.id);
       engine1.dispose();
       engineRef1.current = null;
     };
-  }, [tab.id, tab.host, tab.port, tab.username, tab.password, tab.privateKey, tab.forceOffline, relayUrl]);
+  }, [
+    tab.id,
+    tab.host,
+    tab.port,
+    tab.username,
+    tab.password,
+    tab.privateKey,
+    tab.privateKeyPassphrase,
+    tab.forceOffline,
+    relayUrl,
+    relayAccessToken,
+  ]);
 
+  const splitEnabled = !!tab.splitMode && tab.splitMode !== 'none';
   useEffect(() => {
-    if (tab.splitMode && tab.splitMode !== 'none') {
-      const engine2 = new TerminalEngine(currentTheme);
-      engineRef2.current = engine2;
-      if (containerRef2.current) engine2.mount(containerRef2.current);
-      const offline = new MockSocketTransport();
-      offline.connect(tab.host, tab.port, tab.username).then((s) => engine2.attachStream(s));
-      return () => {
-        engine2.dispose();
-        engineRef2.current = null;
-      };
-    }
-  }, [tab.splitMode, tab.id, tab.host, tab.port, tab.username]);
+    if (!splitEnabled) return;
+    let cancelled = false;
+    const engine2 = new TerminalEngine(currentTheme);
+    engineRef2.current = engine2;
+    if (containerRef2.current) engine2.mount(containerRef2.current);
+
+    const connectSecondPane = async () => {
+      try {
+        if (isOfflineHost(tab)) {
+          const offline = new MockSocketTransport();
+          const stream = await offline.connect(tab.host, tab.port, tab.username);
+          if (!cancelled) engine2.attachStream(stream);
+          return;
+        }
+        const ssh = await connectSshShell({
+          host: tab.host,
+          port: tab.port,
+          auth: {
+            username: tab.username,
+            password: tab.password,
+            privateKeyPem: tab.privateKey,
+            privateKeyPassphrase: tab.privateKeyPassphrase,
+          },
+          relayUrl: relayUrl?.trim() || undefined,
+          relayAccessToken,
+          cols: 120,
+          rows: 40,
+        });
+        if (cancelled) {
+          await ssh.close();
+          return;
+        }
+        sshRef2.current = ssh;
+        engine2.attachStream(ssh.stream);
+        engine2.resize();
+        ssh.resize(engine2.terminal.cols, engine2.terminal.rows);
+      } catch (error) {
+        if (!cancelled) {
+          engine2.terminal.writeln(
+            `\r\n\x1b[31m[第二个 SSH 窗格连接失败]\x1b[0m ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    };
+    void connectSecondPane();
+
+    return () => {
+      cancelled = true;
+      void sshRef2.current?.close();
+      sshRef2.current = null;
+      engine2.dispose();
+      engineRef2.current = null;
+    };
+  }, [
+    splitEnabled,
+    tab.id,
+    tab.host,
+    tab.port,
+    tab.username,
+    tab.password,
+    tab.privateKey,
+    tab.privateKeyPassphrase,
+    tab.forceOffline,
+    relayUrl,
+    relayAccessToken,
+  ]);
 
   useEffect(() => {
     requestAnimationFrame(() => {
       engineRef1.current?.resize();
       engineRef2.current?.resize();
+      if (engineRef2.current && sshRef2.current) {
+        sshRef2.current.resize(engineRef2.current.terminal.cols, engineRef2.current.terminal.rows);
+      }
     });
   }, [tab.splitMode]);
 

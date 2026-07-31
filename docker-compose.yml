@@ -1,4 +1,4 @@
-# One command deploy for operators. End users only open the URL.
+# Static UI only. Configure the separately deployed Cloudflare relay in the browser.
 services:
   ohmyssh:
     build: .

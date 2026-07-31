@@ -39,7 +39,11 @@ export class PtyRequestMessage extends ChannelRequestMessage {
     writer.writeUInt32(this.heightRows);
     writer.writeUInt32(this.widthPixels);
     writer.writeUInt32(this.heightPixels);
-    writer.writeBinary(this.modes);
+    // Write bytes individually instead of passing a Buffer across package/runtime
+    // boundaries. Browser Buffer polyfills and Node's native Buffer are not always
+    // recognized as the same class by SshDataWriter.
+    writer.writeUInt32(this.modes.byteLength);
+    for (const mode of this.modes) writer.writeByte(mode);
   }
 }
 

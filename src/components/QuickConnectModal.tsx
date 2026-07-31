@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Server, Shield, Key, Sparkles, Terminal } from 'lucide-react';
 import type { HostProfile } from '../core/vault/storage';
 
@@ -6,55 +6,123 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   onConnect: (profile: Partial<HostProfile>) => void;
+  initialProfile?: Partial<HostProfile>;
+  connectionType?: 'ssh' | 'sftp';
 }
 
-export const QuickConnectModal: React.FC<Props> = ({ isOpen, onClose, onConnect }) => {
-  const [connectionString, setConnectionString] = useState('root@de.w0x7ce.eu:22');
+export function parseConnectionString(input: string): {
+  username: string;
+  host: string;
+  port: number;
+} {
+  const raw = input.trim();
+  if (!raw || raw.length > 512) throw new Error('连接地址不能为空');
+  const at = raw.lastIndexOf('@');
+  const username = at >= 0 ? raw.slice(0, at).trim() : 'root';
+  let target = (at >= 0 ? raw.slice(at + 1) : raw).trim();
+  if (!username || username.length > 128 || /[\s@]/u.test(username)) {
+    throw new Error('SSH 用户名格式无效');
+  }
+  if (target.includes('://')) throw new Error('SSH 主机地址格式无效');
+
+  let host = '';
+  let port = 22;
+  if (target.startsWith('[')) {
+    const closing = target.indexOf(']');
+    if (closing < 2) throw new Error('IPv6 地址缺少右方括号');
+    host = target.slice(1, closing);
+    const suffix = target.slice(closing + 1);
+    if (suffix) {
+      if (!suffix.startsWith(':')) throw new Error('IPv6 地址后只能跟 :port');
+      port = Number(suffix.slice(1));
+    }
+  } else {
+    const colons = [...target].filter((char) => char === ':').length;
+    if (colons === 1) {
+      const separator = target.lastIndexOf(':');
+      host = target.slice(0, separator);
+      port = Number(target.slice(separator + 1));
+    } else {
+      // Unbracketed IPv6 is accepted with the default SSH port.
+      host = target;
+    }
+  }
+  host = host.trim();
+  if (!host || /[\s/@?#]/u.test(host)) throw new Error('SSH 主机地址格式无效');
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
+    throw new Error('SSH 端口必须是 1 到 65535 的整数');
+  }
+  return { username, host, port };
+}
+
+export const QuickConnectModal: React.FC<Props> = ({
+  isOpen,
+  onClose,
+  onConnect,
+  initialProfile,
+  connectionType = 'ssh',
+}) => {
+  const [connectionString, setConnectionString] = useState('root@');
   const [authType, setAuthType] = useState<'password' | 'privateKey'>('password');
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
+  const [passphrase, setPassphrase] = useState('');
   const [group, setGroup] = useState('默认分组');
+  const [validationError, setValidationError] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const username = initialProfile?.username || 'root';
+    const host = initialProfile?.host || '';
+    const port = initialProfile?.port || 22;
+    const formattedHost = host.includes(':') ? `[${host}]` : host;
+    setConnectionString(`${username}@${formattedHost}${host ? `:${port}` : ''}`);
+    setAuthType(initialProfile?.authType === 'privateKey' ? 'privateKey' : 'password');
+    setGroup(initialProfile?.group || '默认分组');
+    setPassword('');
+    setPrivateKey('');
+    setPassphrase('');
+    setValidationError('');
+  }, [
+    isOpen,
+    initialProfile?.id,
+    initialProfile?.host,
+    initialProfile?.port,
+    initialProfile?.username,
+    initialProfile?.authType,
+    initialProfile?.group,
+  ]);
 
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    let username = 'root';
-    let host = '127.0.0.1';
-    let port = 22;
-
     try {
-      const raw = connectionString.trim();
-      let remaining = raw;
-      if (remaining.includes('@')) {
-        const parts = remaining.split('@');
-        username = parts[0];
-        remaining = parts[1];
-      }
-      if (remaining.includes(':')) {
-        const parts = remaining.split(':');
-        host = parts[0];
-        port = parseInt(parts[1], 10) || 22;
-      } else {
-        host = remaining;
-      }
-    } catch (err) {
-      // fallback
+      const { username, host, port } = parseConnectionString(connectionString);
+      if (authType === 'password' && !password) throw new Error('请输入 SSH 密码');
+      if (authType === 'privateKey' && !privateKey.trim()) throw new Error('请粘贴 SSH 私钥');
+
+      onConnect({
+        name: `${username}@${host}:${port}`,
+        host,
+        port,
+        username,
+        authType,
+        password: authType === 'password' ? password : undefined,
+        privateKey: authType === 'privateKey' ? privateKey : undefined,
+        passphrase: authType === 'privateKey' ? passphrase : undefined,
+        group: group || '默认分组',
+        tags: ['QuickConnect'],
+      });
+
+      setValidationError('');
+      setPassword('');
+      setPrivateKey('');
+      setPassphrase('');
+      onClose();
+    } catch (error) {
+      setValidationError(error instanceof Error ? error.message : String(error));
     }
-
-    onConnect({
-      name: `${username}@${host}:${port}`,
-      host,
-      port,
-      username,
-      authType,
-      password,
-      privateKey,
-      group: group || '默认分组',
-      tags: ['QuickConnect'],
-    });
-
-    onClose();
   };
 
   return (
@@ -67,8 +135,12 @@ export const QuickConnectModal: React.FC<Props> = ({ isOpen, onClose, onConnect 
               <Sparkles className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-slate-100 text-lg">快速连接主机</h3>
-              <p className="text-xs text-slate-400">打开网页即可：user@host:port + 密码 → 浏览器里管 VPS</p>
+              <h3 className="font-semibold text-slate-100 text-lg">
+                {connectionType === 'sftp' ? '连接 SFTP' : '快速连接主机'}
+              </h3>
+              <p className="text-xs text-slate-400">
+                凭据只保留在当前标签页内，不会写入主机列表
+              </p>
             </div>
           </div>
           <button
@@ -149,6 +221,20 @@ export const QuickConnectModal: React.FC<Props> = ({ isOpen, onClose, onConnect 
                 placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                 className="w-full rounded-xl border border-slate-700/60 bg-slate-950/60 py-2.5 px-4 text-xs font-mono text-cyan-200 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
               />
+              <input
+                type="password"
+                value={passphrase}
+                onChange={(event) => setPassphrase(event.target.value)}
+                placeholder="私钥口令（没有则留空；OpenSSH 加密私钥请转 PKCS#8）"
+                autoComplete="off"
+                className="mt-2 w-full rounded-xl border border-slate-700/60 bg-slate-950/60 py-2.5 px-4 text-xs font-mono text-cyan-200 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              />
+            </div>
+          )}
+
+          {validationError && (
+            <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+              {validationError}
             </div>
           )}
 

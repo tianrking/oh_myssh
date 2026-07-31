@@ -1,5 +1,5 @@
-# Oh My SSH — one image: web UI + WebSSH gateway
-# End users only open the website; nothing to download on their PC.
+# Oh My SSH static web UI. SSH transport is provided by the separately
+# deployed Cloudflare raw relay; this image never accepts SSH credentials.
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -11,9 +11,8 @@ FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-COPY server ./server
-COPY --from=build /app/dist ./dist
+COPY --chown=node:node server/prod.mjs ./server/prod.mjs
+COPY --chown=node:node --from=build /app/dist ./dist
+USER node
 EXPOSE 8080
 CMD ["node", "server/prod.mjs"]

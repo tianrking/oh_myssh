@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { buildRelayUrl, buildLocalRelayUrl } from '../browser-stream';
+import { buildLocalRelayUrl, relayEndpointUrls } from '../browser-stream';
 
 describe('SSH relay URL builders', () => {
   const original = globalThis.window;
@@ -27,15 +27,25 @@ describe('SSH relay URL builders', () => {
   });
 
   it('builds local vite relay URL', () => {
-    const url = buildLocalRelayUrl('de.w0x7ce.eu', 22);
+    const url = buildLocalRelayUrl('ssh.example.com', 22);
     expect(url).toContain('ws://localhost:3000/__ohmyssh_tcp');
-    expect(url).toContain('host=de.w0x7ce.eu');
+    expect(url).toContain('host=ssh.example.com');
     expect(url).toContain('port=22');
   });
 
-  it('appends host/port to custom relay base', () => {
-    const url = buildRelayUrl('wss://relay.example/ssh', '10.0.0.1', 2222);
-    expect(url).toContain('host=10.0.0.1');
-    expect(url).toContain('port=2222');
+  it('builds ticket and websocket endpoints without target data in the URL', () => {
+    expect(relayEndpointUrls('https://relay.example/base/')).toEqual({
+      ticketUrl: 'https://relay.example/base/api/ticket',
+      webSocketUrl: 'wss://relay.example/base/api/tcp',
+    });
+  });
+
+  it('rejects credentials, query strings, and insecure remote relays', () => {
+    expect(() => relayEndpointUrls('https://token@relay.example')).toThrow(/credentials/u);
+    expect(() => relayEndpointUrls('https://relay.example?token=secret')).toThrow(/query/u);
+    expect(() => relayEndpointUrls('http://relay.example')).toThrow(/HTTPS/u);
+    expect(relayEndpointUrls('http://localhost:8787').ticketUrl).toBe(
+      'http://localhost:8787/api/ticket',
+    );
   });
 });

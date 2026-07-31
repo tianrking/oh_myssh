@@ -2,8 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   DirectSocketsTransport,
   MockSocketTransport,
-  WebSocketRelayTransport,
-  resolveConnectionMode,
 } from '../transport';
 
 describe('SocketTransport 抽象网络层单元测试', () => {
@@ -16,18 +14,6 @@ describe('SocketTransport 抽象网络层单元测试', () => {
   it('DirectSocketsTransport 在无 TCPSocket 时 connect 应抛出友好错误提示', async () => {
     const transport = new DirectSocketsTransport();
     await expect(transport.connect('127.0.0.1', 22)).rejects.toThrow(/Direct Sockets/);
-  });
-
-  it('WebSocketRelayTransport 能够正确初始化代理 URL 与识别名称', async () => {
-    const transport = new WebSocketRelayTransport('wss://custom.relay/ssh');
-    expect(transport.name).toBe('WebSocket Relay');
-    const caps = await transport.probe();
-    expect(caps.directTcp).toBe(false);
-  });
-
-  it('resolveConnectionMode falls back to offline without DirectSockets or relay', () => {
-    expect(resolveConnectionMode('')).toBe('offline');
-    expect(resolveConnectionMode('wss://relay.example/ssh')).toBe('relay');
   });
 
   it('MockSocketTransport 应该支持离线终端连接与接收欢迎横幅', async () => {
