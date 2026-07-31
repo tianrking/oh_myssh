@@ -89,7 +89,7 @@ export const HeaderNavbar: React.FC<Props> = ({
         {/* Relay settings used by ordinary HTTPS deployments. */}
         <button
           onClick={onOpenRelaySettings}
-          title="配置 Cloudflare 加密 TCP 中继"
+          title="配置 Cloudflare SSH TCP 中继"
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800 bg-slate-900/60 text-slate-500 hover:border-slate-600 hover:text-slate-300 transition-all opacity-70"
         >
           <Network className="h-4 w-4" />
@@ -145,7 +145,7 @@ export const HeaderNavbar: React.FC<Props> = ({
 
         {/* DirectSockets Runtime Indicator */}
         <div
-          title="Vercel 静态 UI · 真实 SSH 使用浏览器 Direct Sockets 或 Cloudflare 加密中继"
+          title="Vercel 静态 UI · 真实 SSH 使用浏览器 Direct Sockets 或 Cloudflare SSH 中继"
           className="hidden lg:flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-1 text-[11px] font-mono"
         >
           <span className="h-2 w-2 rounded-full bg-cyan-400" />

@@ -70,7 +70,7 @@ const en: Record<string, string> = {
 
   // Welcome Page
   welcomeTitle: 'Oh My SSH Workspace Ready',
-  welcomeSub: 'Browser-side SSH and SFTP over a ciphertext-only Cloudflare TCP relay, with strict host-key verification. Credentials stay in this browser session.',
+  welcomeSub: 'Browser-side SSH and SFTP over an authenticated Cloudflare TCP relay that does not terminate SSH, with strict host-key verification. Credentials stay in this browser session.',
   newConnection: 'New Connection',
 
   // Session & Toolbar
@@ -90,7 +90,7 @@ const en: Record<string, string> = {
 
   // Relay Settings Modal
   relaySettingsTitle: 'Cloudflare SSH TCP Relay',
-  relaySettingsSub: 'Configure the authenticated ciphertext-only relay used by HTTPS deployments',
+  relaySettingsSub: 'Configure the authenticated raw SSH TCP relay used by HTTPS deployments',
   relayWarningTitle: 'Web Environment Limitation',
   relayWarningBody: 'Standard web pages cannot initiate raw TCP connections. Deploy the bundled authenticated Cloudflare Worker relay, then enter its HTTPS base URL and access token here. SSH credentials remain in this browser session.',
   relayUrlLabel: 'Cloudflare Worker base URL',
@@ -197,7 +197,7 @@ const zhCN: Record<string, string> = {
 
   // Welcome Page
   welcomeTitle: 'Oh My SSH 工作区已就绪',
-  welcomeSub: 'SSH 加密、认证与 SFTP 均在浏览器执行；Cloudflare 中继只转发 SSH 密文，并严格校验服务器主机指纹。',
+  welcomeSub: 'SSH 加密、认证与 SFTP 均在浏览器执行；Cloudflare 中继不终止或解密 SSH，并严格校验服务器主机指纹。',
   newConnection: '发起新连接',
 
   // Session & Toolbar
@@ -217,7 +217,7 @@ const zhCN: Record<string, string> = {
 
   // Relay Settings Modal
   relaySettingsTitle: 'Cloudflare SSH TCP 中继',
-  relaySettingsSub: '配置 HTTPS 部署使用的鉴权密文中继',
+  relaySettingsSub: '配置 HTTPS 部署使用的鉴权原始 SSH TCP 中继',
   relayWarningTitle: '纯前端网络限制提示',
   relayWarningBody: '普通网页不能直接发起原始 TCP 连接。请先部署仓库内置的鉴权 Cloudflare Worker 中继，再在这里填写 Worker 的 HTTPS 基础地址和访问令牌；SSH 凭据只留在当前浏览器会话。',
   relayUrlLabel: 'Cloudflare Worker 基础地址',
@@ -324,7 +324,7 @@ const esES: Record<string, string> = {
 
   // Welcome Page
   welcomeTitle: 'Oh My SSH — Espacio de trabajo listo',
-  welcomeSub: 'SSH y SFTP se ejecutan en el navegador mediante un relé Cloudflare que solo transporta texto cifrado, con verificación estricta de la clave del host.',
+  welcomeSub: 'SSH y SFTP se ejecutan en el navegador mediante un relé TCP de Cloudflare que no termina ni descifra SSH, con verificación estricta de la clave del host.',
   newConnection: 'Nueva conexión',
 
   // Session & Toolbar
@@ -344,7 +344,7 @@ const esES: Record<string, string> = {
 
   // Relay Settings Modal
   relaySettingsTitle: 'Relé TCP SSH de Cloudflare',
-  relaySettingsSub: 'Configure el relé autenticado que solo transporta tráfico SSH cifrado',
+  relaySettingsSub: 'Configure el relé TCP SSH autenticado usado por despliegues HTTPS',
   relayWarningTitle: 'Limitación del entorno web',
   relayWarningBody: 'Las páginas web normales no pueden iniciar conexiones TCP directas. Despliegue el Worker de Cloudflare autenticado incluido y escriba aquí su URL base HTTPS y el token; las credenciales SSH permanecen en esta sesión del navegador.',
   relayUrlLabel: 'URL base del Worker de Cloudflare',

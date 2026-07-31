@@ -82,7 +82,7 @@ type OpenedTransport = {
 };
 
 const PURE_STATIC_SSH_ERROR = [
-  '当前网页还没有配置可用的加密 TCP 中继，因此浏览器无法连接真实 VPS。',
+  '当前网页还没有配置可用的 SSH TCP 中继，因此浏览器无法连接真实 VPS。',
   '',
   '普通网页不能直接打开 TCP/22。请在“中继设置”中填写已部署的 Oh My SSH',
   'Cloudflare Relay URL 和访问令牌。SSH 密码/私钥仍只在浏览器内使用。',

@@ -58,12 +58,12 @@ export const RelaySettingsModal: React.FC<Props> = ({
           <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-3 text-slate-300 space-y-1">
             <div className="flex items-center gap-1.5 font-semibold text-slate-200">
               <ShieldAlert className="h-4 w-4 text-slate-400" />
-              <span>Cloudflare 加密 TCP 中继</span>
+              <span>Cloudflare SSH TCP 中继</span>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
               普通浏览器需要中继才能访问 TCP/22。SSH 握手、主机指纹、密码、私钥和
-              SFTP 都在浏览器内完成；中继只转发 SSH 密文。访问令牌仅保留到当前浏览器
-              标签会话，绝不会写入 Vercel 构建或 URL。
+              SFTP 都在浏览器内完成；中继转发原始 SSH 协议字节，不终止或解密 SSH。
+              访问令牌仅保留到当前浏览器标签会话，绝不会写入 Vercel 构建或 URL。
             </p>
           </div>
 
