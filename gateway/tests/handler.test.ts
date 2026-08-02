@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('cloudflare:sockets', () => ({ connect: vi.fn() }));
 
-import worker from '../src/index';
+import worker, { clientRateLimitKey } from '../src/index';
 
 function testEnv(assetsFetch: ReturnType<typeof vi.fn>) {
   return {
@@ -62,5 +62,31 @@ describe('unified Worker request boundary', () => {
 
     expect(response.status).toBe(204);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://oh-myssh.example');
+  });
+
+  it('uses a deterministic anonymous rate-limit key when the edge omits the client IP', async () => {
+    const first = new Request('https://ssh.w0x7ce.eu/api/ticket', {
+      headers: {
+        Origin: 'https://ssh.w0x7ce.eu',
+        'User-Agent': 'test-browser/1.0',
+        'Accept-Language': 'zh-CN',
+        'X-Forwarded-For': '198.51.100.20',
+      },
+    });
+    const second = new Request('https://ssh.w0x7ce.eu/api/ticket', {
+      headers: {
+        Origin: 'https://ssh.w0x7ce.eu',
+        'User-Agent': 'test-browser/1.0',
+        'Accept-Language': 'zh-CN',
+        'X-Forwarded-For': '203.0.113.40',
+      },
+    });
+
+    const [firstKey, secondKey] = await Promise.all([
+      clientRateLimitKey(first),
+      clientRateLimitKey(second),
+    ]);
+    expect(firstKey).toMatch(/^anon:[A-Za-z0-9_-]{43}$/u);
+    expect(secondKey).toBe(firstKey);
   });
 });

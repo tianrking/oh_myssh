@@ -5,6 +5,7 @@ Worker 地址同时提供 Vite 静态页面、SSH ticket API、WebSocket TCP 中
 Objects 会话，不需要在 Vercel 与 Worker 之间来回配置。
 
 当前已部署入口：<https://oh-myssh-relay.bkgr.workers.dev>
+正式产品域名：<https://ssh.w0x7ce.eu>
 
 打开上述地址即可使用完整服务；在“中继设置”中填入部署时生成的 `ACCESS_TOKEN`，
 Worker 地址留空即可自动使用当前页面的同源地址。令牌只保存在当前浏览器标签页的
@@ -98,6 +99,7 @@ curl https://<worker>.workers.dev/health
 应看到 `"ok":true`、`"service":"oh-myssh-relay"` 和
 `"deployment":"unified-workers"`。打开同一个地址即可使用页面；在中继设置里
 只需填写 `ACCESS_TOKEN`，Worker 地址可以留空，前端会自动使用当前页面同源地址。
+生产环境优先打开 `https://ssh.w0x7ce.eu`；`workers.dev` 地址保留作回退和运维检查。
 
 ### 4. 第一次连接
 

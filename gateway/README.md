@@ -29,11 +29,12 @@ From the repository root:
    ```
 
 The command is equivalent to `npm run build && wrangler deploy --config gateway/wrangler.toml`.
-The returned `https://<worker>.workers.dev` URL is the single application URL. Verify it before
+The returned `https://<worker>.workers.dev` URL is the fallback application URL. This deployment
+also binds the production custom domain `https://ssh.w0x7ce.eu`; verify the custom domain before
 using the UI:
 
 ```bash
-curl https://<worker>.workers.dev/health
+curl https://ssh.w0x7ce.eu/health
 ```
 
 The JSON must contain `"ok":true`, `"service":"oh-myssh-relay"`, and

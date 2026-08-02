@@ -5,6 +5,7 @@ SSH ticket API、WebSocket TCP 中继和 Durable Objects。Vercel 只能作为�
 镜像，不能替代 Worker 连接公网 TCP/22。
 
 当前生产实例：<https://oh-myssh-relay.bkgr.workers.dev>
+正式产品域名：<https://ssh.w0x7ce.eu>
 
 打开该地址即可进入页面。Worker 基础地址可以留空（前端会自动使用当前页面的同源
 地址），只需在“中继设置”中填入 Cloudflare Secret `ACCESS_TOKEN` 对应的令牌。
@@ -64,6 +65,18 @@ npm run workers:deploy
 可以为 Worker 配置自定义域名。当前浏览器 ticket 请求明确不发送 Cookie，因此尚
 不支持把交互式 Cloudflare Access 登录作为强制边界；不要在未扩展客户端认证流程
 前关闭唯一可用入口。
+
+本项目的生产自定义域名是 `ssh.w0x7ce.eu`，已在 Cloudflare Workers 的“网域”页
+绑定到 `oh-myssh-relay`。Cloudflare 会负责该主机名的 DNS 记录和证书；部署后应从
+这个域名验证，而不是只验证 `workers.dev` 回退地址：
+
+```bash
+curl https://ssh.w0x7ce.eu/health
+```
+
+如果某个控制面或反向代理没有提供 `CF-Connecting-IP`，Worker 会只为限流生成一个
+匿名、短字段指纹，不会信任客户端伪造的 `X-Forwarded-For` / `X-Real-IP`，也不会
+放宽 Origin、Bearer token、目标主机或端口校验。
 
 ## 3. 验证统一 Worker 服务
 

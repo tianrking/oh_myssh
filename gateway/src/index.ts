@@ -53,12 +53,28 @@ function originAllowedForRequest(request: Request, env: GatewayEnv): boolean {
   return originAllowed(origin, env.ALLOWED_ORIGINS);
 }
 
-function clientIp(request: Request): string {
+export async function clientRateLimitKey(request: Request): Promise<string> {
   const ip = request.headers.get('CF-Connecting-IP')?.trim();
-  if (ip) return ip;
+  if (ip) return `ip:${ip}`;
   const hostname = new URL(request.url).hostname;
-  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') return '127.0.0.1';
-  throw new RelayHttpError('Client address is unavailable', 400);
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') return 'ip:127.0.0.1';
+
+  // Cloudflare normally provides CF-Connecting-IP on the edge-to-Worker hop.
+  // Some custom-domain/control-plane paths (and local reverse proxies) omit it.
+  // Do not trust user-supplied X-Forwarded-For/X-Real-IP as an authorization
+  // input; use a bounded anonymous request fingerprint only for rate limiting.
+  // This keeps the relay available while retaining a deterministic per-client
+  // bucket when the platform cannot expose the source address.
+  const fingerprint = [
+    hostname,
+    request.headers.get('Origin')?.trim() || '',
+    request.headers.get('User-Agent')?.slice(0, 256) || '',
+    request.headers.get('Accept-Language')?.slice(0, 128) || '',
+    request.headers.get('Sec-CH-UA')?.slice(0, 256) || '',
+    request.headers.get('Sec-CH-UA-Platform')?.slice(0, 128) || '',
+    request.headers.get('Sec-CH-UA-Mobile')?.slice(0, 32) || '',
+  ].join('\n');
+  return `anon:${await sha256Base64Url(fingerprint)}`;
 }
 
 async function authorized(request: Request, env: GatewayEnv): Promise<boolean> {
@@ -83,7 +99,7 @@ async function createTicket(request: Request, env: GatewayEnv, origin: string): 
   const maxSessions = parsePositiveInt(env.MAX_SESSIONS_PER_IP, 4, 1, 100);
   const expiresAt = now + ticketTtlSeconds * 1000;
   const sessionId = env.SESSIONS.newUniqueId();
-  const limiterId = env.RATE_LIMITS.idFromName(clientIp(request));
+  const limiterId = env.RATE_LIMITS.idFromName(await clientRateLimitKey(request));
   const limiter = env.RATE_LIMITS.get(limiterId);
   const reservation = await limiter.fetch('https://rate.internal/reserve', {
     method: 'POST',
