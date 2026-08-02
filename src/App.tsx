@@ -349,7 +349,7 @@ export function App() {
         onOpenRelaySettings={() => setIsRelaySettingsOpen(true)}
       />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <HostSidebar
           hosts={hosts}
           onConnectHost={(host) => {
@@ -362,7 +362,7 @@ export function App() {
           onDeleteHost={handleDeleteHost}
         />
 
-        <div className="flex flex-1 flex-col overflow-hidden bg-slate-950">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-slate-950">
           {tabs.length > 0 && (
             <WorkspaceTabs
               tabs={tabs}
@@ -376,7 +376,7 @@ export function App() {
 
           {/* Keep ALL tabs mounted so SSH/offline sessions survive tab switches */}
           {tabs.length > 0 ? (
-            <div className="flex-1 overflow-hidden relative">
+            <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
               {tabs.map((tab) => (
                 <div
                   key={tab.id}

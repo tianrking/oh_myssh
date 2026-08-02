@@ -102,6 +102,7 @@ export class TerminalEngine {
   private readAbort = false;
   private disposed = false;
   private webglLoad: Promise<boolean> | null = null;
+  private resizeObserver: ResizeObserver | null = null;
   private readonly handleContainerClick = () => this.terminal.focus();
 
   constructor(themeName: string = 'cyberpunk', scrollback: number = 10000) {
@@ -133,9 +134,18 @@ export class TerminalEngine {
 
     // Fit after layout settles
     requestAnimationFrame(() => {
-      this.fitAddon.fit();
+      this.resize();
       this.terminal.focus();
     });
+
+    // The workspace can change size without a window resize (sidebar collapse,
+    // tab bar changes, split panes, browser zoom). Keep the terminal grid and
+    // its scroll viewport in sync with the actual pane instead of fitting only
+    // once at mount time.
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(container);
+    }
   }
 
   public enableWebGL(): Promise<boolean> {
@@ -310,6 +320,8 @@ export class TerminalEngine {
 
   public dispose() {
     this.disposed = true;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     this.containerElement?.removeEventListener('click', this.handleContainerClick);
     this.detachStream();
     this.disableWebGL();

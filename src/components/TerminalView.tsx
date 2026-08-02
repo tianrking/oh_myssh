@@ -360,9 +360,9 @@ export const TerminalView: React.FC<Props> = ({
         : 'text-cyan-400';
 
   return (
-    <div className="flex h-full w-full flex-col bg-slate-950">
+    <div className="flex h-full min-h-0 min-w-0 w-full flex-col bg-slate-950">
       <div
-        className={`flex-1 overflow-hidden p-1.5 ${
+        className={`flex min-h-0 min-w-0 flex-1 overflow-hidden p-1.5 ${
           tab.splitMode === 'vertical'
             ? 'flex flex-row divide-x divide-slate-800'
             : tab.splitMode === 'horizontal'
@@ -372,17 +372,17 @@ export const TerminalView: React.FC<Props> = ({
       >
         <div
           ref={containerRef1}
-          className="h-full w-full flex-1 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950 p-2 shadow-inner cursor-text"
+          className="h-full min-h-0 min-w-0 w-full flex-1 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950 p-2 shadow-inner cursor-text"
         />
         {tab.splitMode && tab.splitMode !== 'none' && (
           <div
             ref={containerRef2}
-            className="h-full w-full flex-1 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950 p-2 shadow-inner cursor-text"
+            className="h-full min-h-0 min-w-0 w-full flex-1 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950 p-2 shadow-inner cursor-text"
           />
         )}
       </div>
 
-      <div className="flex h-7 items-center justify-between border-t border-slate-800/80 bg-slate-950 px-3 text-[11px] text-slate-400 font-mono select-none">
+      <div className="flex h-7 shrink-0 items-center justify-between border-t border-slate-800/80 bg-slate-950 px-3 text-[11px] text-slate-400 font-mono select-none">
         <div className="flex items-center gap-4 min-w-0">
           <span className={`flex items-center gap-1.5 shrink-0 ${statusColor}`}>
             {connectionMode === 'offline' ? (

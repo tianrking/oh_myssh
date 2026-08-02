@@ -33,6 +33,16 @@
 }
 
 /* xterm.js customized styling */
+.xterm {
+  width: 100%;
+  height: 100%;
+}
+
+.xterm .xterm-viewport {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 .xterm-viewport::-webkit-scrollbar {
   width: 8px;
 }
