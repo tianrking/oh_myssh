@@ -94,7 +94,7 @@ export const RelaySettingsModal: React.FC<Props> = ({
               className="w-full rounded-xl border border-slate-700 bg-slate-950/60 p-2.5 font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
             />
             <p className="mt-1.5 text-[10px] text-slate-500">
-              纯 Workers 页面可留空地址；Vercel 页面填写 https://your-relay.workers.dev。不要把令牌放进 URL 或 VITE_* 环境变量。
+              正式 Workers 页面会自动发现同源中继；Vercel 镜像也会自动回退到 ssh.w0x7ce.eu，地址通常可以留空。中继访问令牌仍必须填写，令牌只保存在当前标签页，不能把它打包进公开网页或 VITE_* 环境变量。
             </p>
           </div>
 

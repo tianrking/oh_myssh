@@ -92,6 +92,16 @@ const PURE_STATIC_SSH_ERROR = [
 
 let ed25519Support: Promise<boolean> | undefined;
 
+/**
+ * Public product endpoint used when the optional Vercel static mirror is opened.
+ * This is a URL, not a credential; the relay access token remains session-only.
+ */
+export const PRODUCTION_RELAY_URL = 'https://ssh.w0x7ce.eu';
+
+export function relayUrlForStaticMirror(hostname: string): string {
+  return hostname.trim().toLowerCase() === 'oh-myssh.vercel.app' ? PRODUCTION_RELAY_URL : '';
+}
+
 function supportsEd25519(): Promise<boolean> {
   if (!ed25519Support) {
     ed25519Support = crypto.subtle
@@ -116,6 +126,7 @@ async function environmentRelayUrl(): Promise<string> {
   }
 
   if (isLocalDevelopmentOrigin()) return '';
+  const staticMirrorRelay = relayUrlForStaticMirror(window.location.hostname);
   try {
     const origin = window.location.origin;
     const response = await fetch(`${origin}/health`, {
@@ -124,10 +135,11 @@ async function environmentRelayUrl(): Promise<string> {
       referrerPolicy: 'no-referrer',
     });
     const body = await response.json().catch(() => ({})) as { service?: string };
-    return response.ok && body.service === 'oh-myssh-relay' ? origin : '';
+    if (response.ok && body.service === 'oh-myssh-relay') return origin;
   } catch {
-    return '';
+    return staticMirrorRelay;
   }
+  return staticMirrorRelay;
 }
 
 async function withTimeout<T>(

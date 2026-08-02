@@ -145,11 +145,11 @@ export const HeaderNavbar: React.FC<Props> = ({
 
         {/* DirectSockets Runtime Indicator */}
         <div
-          title="Vercel 静态 UI · 真实 SSH 使用浏览器 Direct Sockets 或 Cloudflare SSH 中继"
+          title="Cloudflare Workers 统一页面 · 真实 SSH 使用浏览器 Direct Sockets 或 Cloudflare SSH 中继"
           className="hidden lg:flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-1 text-[11px] font-mono"
         >
           <span className="h-2 w-2 rounded-full bg-cyan-400" />
-          <span className="text-cyan-300">Static SPA</span>
+          <span className="text-cyan-300">Workers SPA</span>
         </div>
 
         {/* Quick Connect Button */}

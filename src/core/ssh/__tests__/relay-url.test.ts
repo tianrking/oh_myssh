@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { buildLocalRelayUrl, relayEndpointUrls } from '../browser-stream';
+import { PRODUCTION_RELAY_URL, relayUrlForStaticMirror } from '../client';
 
 describe('SSH relay URL builders', () => {
+  it('falls back from the Vercel mirror to the unified Worker endpoint', () => {
+    expect(relayUrlForStaticMirror('oh-myssh.vercel.app')).toBe(PRODUCTION_RELAY_URL);
+    expect(relayUrlForStaticMirror('preview-oh-myssh.vercel.app')).toBe('');
+    expect(relayUrlForStaticMirror('ssh.w0x7ce.eu')).toBe('');
+  });
+
   const original = globalThis.window;
 
   beforeEach(() => {

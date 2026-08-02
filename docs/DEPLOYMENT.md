@@ -119,10 +119,11 @@ Cloudflare 创建一个仅具备该 Worker 部署权限的长期 API Token，再
 这不会自动发布 Cloudflare Worker；`gateway/` 变化仍要执行 `npm run workers:deploy`。
 Preview 域名默认不在 `ALLOWED_ORIGINS`，需要测试时加入它的精确 origin。
 
-前端构建不需要 SSH 密码、私钥或 Worker access token。Vercel 页面不是完整 SSH
-服务；部署完成后打开网页，进入“Cloudflare SSH TCP 中继”设置，填写：
+前端构建不需要 SSH 密码或私钥。Vercel 页面不是完整 SSH 服务，但会自动把中继
+回退到正式的 `https://ssh.w0x7ce.eu`；用户不需要在本地启动任何 relay 程序。
+部署完成后打开网页，进入“Cloudflare SSH TCP 中继”设置，填写：
 
-- Worker 基础地址：`https://你的-worker.workers.dev`
+- Worker 基础地址：正式页面和 Vercel 镜像均可留空（默认使用 `https://ssh.w0x7ce.eu`）
 - 中继访问令牌：刚才设置的 `ACCESS_TOKEN`
 
 URL 会保存在 localStorage；令牌只保存在本标签会话的 sessionStorage。

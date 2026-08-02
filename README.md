@@ -116,9 +116,10 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
 
 ## 可选：Vercel 静态镜像
 
-Vercel 仍可部署 `main` 分支的 `dist`，但它只是前端镜像。普通浏览器访问 Vercel
-页面时，需要在中继设置中填写纯 Workers 部署返回的 Worker 地址和同一个访问令牌；
-Vercel 本身不能替代 Worker 连接公网 TCP/22。
+Vercel 仍可部署 `main` 分支的 `dist`，但它只是前端镜像。Vercel 页面会自动把
+SSH 中继回退到正式的 `https://ssh.w0x7ce.eu`；页面和 Worker 都不需要本地运行任何
+程序。浏览器仍必须在“中继设置”中填写 `ACCESS_TOKEN`，因为不能把公开 Worker
+密钥打包进网页；Vercel 本身不能替代 Worker 连接公网 TCP/22。
 
 仓库已包含 `vercel.json`：
 
