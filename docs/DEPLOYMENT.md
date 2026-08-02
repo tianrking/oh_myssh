@@ -89,6 +89,9 @@ Settings → Secrets and variables → Actions 中添加以下两个 Repository 
 之后推送到 `main` 会先运行完整测试、构建静态 Assets、检查 Worker 类型，再部署同一个
 Worker 并同步 `ACCESS_TOKEN` Secret。首次部署前也可以手动执行 `workflow_dispatch`；
 Account ID 已写入 `gateway/wrangler.toml`，工作流不会把任何令牌写入 Git 或构建产物。
+本次线上实例已经通过 Wrangler OAuth 手动发布；OAuth 登录状态只在本机有效，不能代替
+GitHub Actions 的非交互式 `CLOUDFLARE_API_TOKEN`。如果要启用推送后的自动发布，请在
+Cloudflare 创建一个仅具备该 Worker 部署权限的长期 API Token，再填入 GitHub Secret。
 
 ## 5. 可选：部署 Vercel 静态镜像
 
