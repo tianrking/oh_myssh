@@ -14,6 +14,7 @@ describe('browser login authentication', () => {
     const encoded = await createPasswordHash('fixture-password', salt, 50_000);
     expect(encoded).toMatch(/^pbkdf2-sha256\$50000\$/u);
     expect(await verifyPassword('fixture-password', encoded)).toBe(true);
+    expect(await verifyPassword('fixture-password', `\uFEFF${encoded}\r\n`)).toBe(true);
     expect(await verifyPassword('wrong-password', encoded)).toBe(false);
   });
 

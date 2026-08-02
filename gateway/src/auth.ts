@@ -47,8 +47,9 @@ export async function createPasswordHash(
 }
 
 export async function verifyPassword(password: string, encodedHash: string | undefined): Promise<boolean> {
-  if (!password || !encodedHash || encodedHash.length > 1024) return false;
-  const parts = encodedHash.split('$');
+  const record = encodedHash?.replace(/^\uFEFF/u, '').trim() || '';
+  if (!password || !record || record.length > 1024) return false;
+  const parts = record.split('$');
   if (parts.length !== 4 || parts[0] !== PASSWORD_HASH_SCHEME) return false;
   const iterations = Number(parts[1]);
   if (!Number.isSafeInteger(iterations) || iterations < 50_000 || iterations > 500_000) return false;
