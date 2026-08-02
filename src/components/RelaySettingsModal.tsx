@@ -62,9 +62,9 @@ export const RelaySettingsModal: React.FC<Props> = ({
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
               纯 Workers 部署会在同一个地址提供页面和 SSH 中继，浏览器会自动发现同源
-              Worker；这时中继地址可以留空。Vercel 镜像或其他前端才需要填写 Worker
-              地址。SSH 握手、主机指纹、密码、私钥和 SFTP 都在浏览器内完成；中继转发
-              原始 SSH 协议字节，不终止或解密 SSH。
+              Worker；Vercel 镜像也会自动回退到正式 Worker，因此中继地址通常可以留空。
+              SSH 握手、主机指纹、密码、私钥和 SFTP 都在浏览器内完成；中继只转发原始
+              SSH 协议字节，不终止或解密 SSH。
             </p>
           </div>
 
