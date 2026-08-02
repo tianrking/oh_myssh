@@ -87,32 +87,26 @@ export async function hostKeyFingerprint(keyPair: KeyPair): Promise<{ keyType: s
 }
 
 function defaultConfirmation(prompt: HostKeyPrompt): boolean {
+  // The production UI is intentionally click-free after the product login. Trust the
+  // first key on a host once and persist it as TOFU; a later key change still requires
+  // an explicit confirmation and is rejected when the browser cannot show one.
+  if (prompt.status === 'first-seen') return true;
   if (typeof window === 'undefined' || typeof window.confirm !== 'function') return false;
-  const firstSeen = prompt.status === 'first-seen';
-  const message = firstSeen
-    ? [
-        '首次连接到这台服务器。请先在可信渠道核对主机指纹：',
-        '',
-        `${prompt.host}:${prompt.port}`,
-        `${prompt.keyType}  ${prompt.fingerprint}`,
-        '',
-        '确认信任并继续连接吗？',
-      ]
-    : [
-        '警告：服务器主机密钥已经变化，可能是服务器重装，也可能是中间人攻击。',
-        '',
-        `${prompt.host}:${prompt.port}`,
-        `原指纹：${prompt.previousFingerprint}`,
-        `新指纹：${prompt.fingerprint}`,
-        '',
-        '只有在你已通过可信渠道确认变更时，才选择继续。',
-      ];
+  const message = [
+    '警告：服务器主机密钥已经变化，可能是服务器重装，也可能是中间人攻击。',
+    '',
+    `${prompt.host}:${prompt.port}`,
+    `原指纹：${prompt.previousFingerprint}`,
+    `新指纹：${prompt.fingerprint}`,
+    '',
+    '只有在你已通过可信渠道确认变更时，才选择继续。',
+  ];
   return window.confirm(message.join('\n'));
 }
 
 /**
- * Strict TOFU: matching keys pass silently. First-seen or changed keys pause for explicit
- * confirmation, and storage is updated only after acceptance.
+ * TOFU: matching keys pass silently, first-seen keys are stored automatically, and changed
+ * keys require explicit confirmation before storage can be updated.
  */
 export async function verifyKnownHost(
   host: string,

@@ -38,8 +38,8 @@ origin；Vercel 仍可作为静态镜像，但不承担 SSH 运行时。Cloudfla
 - TCP 连接使用已校验的具体 IP，不重新用 hostname 解析，避免常规 DNS rebinding。
 - `ALLOWED_ORIGINS`、`ALLOWED_PORTS`、`ALLOWED_HOSTS`、每分钟 ticket 数、每 IP
   活跃会话数、单帧/队列/总字节、空闲和最长会话都有边界。
-- 浏览器对 SSH host key 做严格 TOFU：首次和变化都暂停确认，只有接受后才保存；
-  拒绝变化不会覆盖旧指纹。
+- 浏览器对 SSH host key 做 TOFU：首次连接自动保存 SHA-256 指纹，不依赖原生确认框；
+  后续指纹变化仍然阻断且不会覆盖旧指纹。
 - Worker 到浏览器使用逐帧 ACK 背压；浏览器到 Worker 使用串行 writer 和队列上限。
 - Workers Assets 与可选的 Vercel 静态服务器设置 CSP、HSTS、frame deny、nosniff、no-referrer 等安全头。
 - 已移除会接收明文 SSH 凭据并可拨任意目标的旧 Node WebSSH gateway。

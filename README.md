@@ -28,7 +28,7 @@ Objects 会话，不需要在 Vercel 与 Worker 之间来回配置。
 | 能力 | 当前实现 |
 | --- | --- |
 | SSH 认证 | Password、单密码 keyboard-interactive、RSA/ECDSA PEM、加密 PKCS#8、未加密 OpenSSH Ed25519/RSA/ECDSA |
-| 主机校验 | 严格 TOFU；首次显示 SHA-256 指纹，指纹变化默认阻断且不会覆盖旧记录 |
+| 主机校验 | 首次连接自动保存 SHA-256 指纹；后续指纹变化默认阻断且不会覆盖旧记录，不弹原生确认框 |
 | 终端 | PTY、交互 Shell、窗口 resize、keepalive、多标签、真实双连接分屏 |
 | SFTP v3 | 列表、stat、创建/删除、重命名、128 KiB 流式上传下载、原子上传、OPFS 本地文件区 |
 | Workers 服务 | 静态 Assets、Bearer token、一次性 ticket、Origin/主机/端口限制、DNS/SSRF 防护、Durable Objects、速率/会话/流量/超时边界 |
@@ -108,8 +108,13 @@ curl https://<worker>.workers.dev/health
 
 1. 快速连接输入 `user@host:22` 或 `user@host:2222`。
 2. 输入密码，或粘贴受支持的私钥。
-3. 浏览器显示服务器 host-key SHA-256 指纹；通过服务器控制台等可信渠道核对后接受。
-4. 打开终端或 SFTP。
+3. 浏览器首次收到 host-key 后自动保存 SHA-256 指纹，不弹原生安全确认框。
+4. 后续连接会静默校验已保存指纹；指纹变化会阻断连接，不会自动覆盖旧记录。
+5. 打开终端或 SFTP。
+
+首次自动信任是为了让纯网页产品不依赖浏览器原生弹窗；高风险环境仍建议先用
+服务器控制台或可信运维渠道核对指纹。指纹变化必须先确认服务器是否重装或更换密钥，
+不会因为登录密码正确就放行。
 
 服务器上查看 Ed25519 host key 指纹：
 

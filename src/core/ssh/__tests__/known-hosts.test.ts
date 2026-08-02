@@ -32,6 +32,11 @@ describe('strict known-hosts TOFU', () => {
     expect(getKnownHost('example.com', 22)?.fingerprint).toMatch(/^SHA256:/u);
   });
 
+  it('auto-trusts a first-seen key in the browser flow without a native prompt', async () => {
+    await expect(verifyKnownHost('example.com', 22, key([4, 5, 6]))).resolves.toBe(true);
+    expect(getKnownHost('example.com', 22)?.fingerprint).toMatch(/^SHA256:/u);
+  });
+
   it('accepts a matching key silently and blocks a changed key without overwriting', async () => {
     await verifyKnownHost('example.com', 22, key([1, 2, 3]), async () => true);
     const original = getKnownHost('example.com', 22)?.fingerprint;
