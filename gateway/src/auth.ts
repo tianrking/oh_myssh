@@ -3,7 +3,8 @@ import type { GatewayEnv } from './types';
 
 export const AUTH_COOKIE_NAME = 'ohmyssh_session';
 export const PASSWORD_HASH_SCHEME = 'pbkdf2-sha256';
-export const PASSWORD_HASH_ITERATIONS = 120_000;
+// Cloudflare Workers WebCrypto currently caps PBKDF2 iteration counts at 100,000.
+export const PASSWORD_HASH_ITERATIONS = 100_000;
 export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 const encoder = new TextEncoder();
@@ -39,7 +40,7 @@ export async function createPasswordHash(
   iterations = PASSWORD_HASH_ITERATIONS,
 ): Promise<string> {
   if (!password || encoder.encode(password).byteLength > 512) throw new RelayHttpError('Invalid login password', 400);
-  if (!Number.isSafeInteger(iterations) || iterations < 50_000 || iterations > 500_000) {
+  if (!Number.isSafeInteger(iterations) || iterations < 50_000 || iterations > 100_000) {
     throw new RelayHttpError('Invalid password hash settings', 500);
   }
   const digest = await derivePasswordDigest(password, salt, iterations);
@@ -52,7 +53,7 @@ export async function verifyPassword(password: string, encodedHash: string | und
   const parts = record.split('$');
   if (parts.length !== 4 || parts[0] !== PASSWORD_HASH_SCHEME) return false;
   const iterations = Number(parts[1]);
-  if (!Number.isSafeInteger(iterations) || iterations < 50_000 || iterations > 500_000) return false;
+  if (!Number.isSafeInteger(iterations) || iterations < 50_000 || iterations > 100_000) return false;
   try {
     const salt = decodeBase64Url(parts[2]);
     if (salt.byteLength < 8 || salt.byteLength > 64) return false;
