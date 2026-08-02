@@ -85,7 +85,7 @@ const PURE_STATIC_SSH_ERROR = [
   '当前网页还没有配置可用的 SSH TCP 中继，因此浏览器无法连接真实 VPS。',
   '',
   '普通网页不能直接打开 TCP/22。请在“中继设置”中填写已部署的 Oh My SSH',
-  'Cloudflare Relay URL 和访问令牌。SSH 密码/私钥仍只在浏览器内使用。',
+  'Cloudflare Relay URL，并先在 Worker 页面完成登录。SSH 密码/私钥仍只在浏览器内使用。',
   '',
   '本地开发可直接运行 npm run dev；Vite 内置的仅本机 raw relay 会自动启用。',
 ].join('\n');
@@ -94,7 +94,7 @@ let ed25519Support: Promise<boolean> | undefined;
 
 /**
  * Public product endpoint used when the optional Vercel static mirror is opened.
- * This is a URL, not a credential; the relay access token remains session-only.
+ * This is a URL, not a credential; the Worker login session authorizes the relay.
  */
 export const PRODUCTION_RELAY_URL = 'https://ssh.w0x7ce.eu';
 

@@ -204,7 +204,6 @@ async function requestRelayTicket(
   port: number,
   timeoutMs: number,
 ): Promise<{ ticket: RelayTicket; webSocketUrl: string }> {
-  if (!endpoint.accessToken.trim()) throw new Error('Relay access token is required');
   const urls = relayEndpointUrls(endpoint.url.trim());
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
