@@ -28,10 +28,10 @@ jobs:
       OH_MYSSH_SESSION_SECRET: ${{ secrets.OH_MYSSH_SESSION_SECRET }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Use Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
