@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('cloudflare:sockets', () => ({ connect: vi.fn() }));
 
-import { createPasswordHash } from '../src/auth';
+import { createPasswordHash, createSessionCookie } from '../src/auth';
 import worker, { clientRateLimitKey } from '../src/index';
 
 function testEnv(assetsFetch: ReturnType<typeof vi.fn>) {
@@ -89,6 +89,20 @@ describe('unified Worker request boundary', () => {
     ]);
     expect(firstKey).toMatch(/^anon:[A-Za-z0-9_-]{43}$/u);
     expect(secondKey).toBe(firstKey);
+  });
+
+  it('uses the signed browser session as the rate-limit bucket', async () => {
+    const env = { APP_SESSION_SECRET: 'fixture-session-secret' } as any;
+    const session = await createSessionCookie(env);
+    const request = new Request('https://ssh.w0x7ce.eu/api/ticket', {
+      headers: {
+        Origin: 'https://ssh.w0x7ce.eu',
+        Cookie: session.header.split(';', 1)[0],
+        'CF-Connecting-IP': '198.51.100.40',
+      },
+    });
+
+    await expect(clientRateLimitKey(request, env)).resolves.toMatch(/^session:[A-Za-z0-9_-]{43}$/u);
   });
 
   it('logs in through the Worker and authorizes the browser session cookie', async () => {

@@ -42,8 +42,8 @@ export class RateLimit {
 
     const now = Date.now();
     const expiresAt = Number(body.expiresAt);
-    const ticketsPerMinute = Math.max(1, Math.min(600, Number(body.ticketsPerMinute) || 10));
-    const maxSessions = Math.max(1, Math.min(100, Number(body.maxSessions) || 4));
+    const ticketsPerMinute = Math.max(1, Math.min(600, Number(body.ticketsPerMinute) || 30));
+    const maxSessions = Math.max(1, Math.min(100, Number(body.maxSessions) || 16));
     let allowed = false;
     let reason = 'rate_limited';
     let retryAfter = 60;

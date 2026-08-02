@@ -3,6 +3,7 @@ import {
   expiredSessionCookie,
   hasValidSession,
   parsePasswordBody,
+  readSessionCookie,
   verifyPassword,
 } from './auth';
 import { RateLimit } from './rate-limit';
@@ -61,7 +62,16 @@ function originAllowedForRequest(request: Request, env: GatewayEnv): boolean {
   return originAllowed(origin, env.ALLOWED_ORIGINS);
 }
 
-export async function clientRateLimitKey(request: Request): Promise<string> {
+export async function clientRateLimitKey(request: Request, env?: GatewayEnv): Promise<string> {
+  // A signed browser session is a better client boundary than the source IP:
+  // several users can share an address, while one authenticated user may
+  // intentionally keep several SSH tabs open at once. The cookie value is
+  // hashed before it becomes a Durable Object name and is never logged.
+  if (env && await hasValidSession(request, env)) {
+    const sessionCookie = readSessionCookie(request);
+    if (sessionCookie) return `session:${await sha256Base64Url(sessionCookie)}`;
+  }
+
   const ip = request.headers.get('CF-Connecting-IP')?.trim();
   if (ip) return `ip:${ip}`;
   const hostname = new URL(request.url).hostname;
@@ -172,11 +182,11 @@ async function createTicket(request: Request, env: GatewayEnv, origin: string): 
 
   const now = Date.now();
   const ticketTtlSeconds = parsePositiveInt(env.TICKET_TTL_SECONDS, 30, 10, 120);
-  const ticketsPerMinute = parsePositiveInt(env.TICKETS_PER_MINUTE, 10, 1, 600);
-  const maxSessions = parsePositiveInt(env.MAX_SESSIONS_PER_IP, 4, 1, 100);
+  const ticketsPerMinute = parsePositiveInt(env.TICKETS_PER_MINUTE, 30, 1, 600);
+  const maxSessions = parsePositiveInt(env.MAX_SESSIONS_PER_IP, 16, 1, 100);
   const expiresAt = now + ticketTtlSeconds * 1000;
   const sessionId = env.SESSIONS.newUniqueId();
-  const limiterId = env.RATE_LIMITS.idFromName(await clientRateLimitKey(request));
+  const limiterId = env.RATE_LIMITS.idFromName(await clientRateLimitKey(request, env));
   const limiter = env.RATE_LIMITS.get(limiterId);
   const reservation = await limiter.fetch('https://rate.internal/reserve', {
     method: 'POST',
@@ -189,8 +199,19 @@ async function createTicket(request: Request, env: GatewayEnv, origin: string): 
     }),
   });
   if (!reservation.ok) {
-    const retryAfter = reservation.headers.get('Retry-After') || '30';
-    return json({ error: 'Gateway rate limit exceeded' }, 429, origin, { 'Retry-After': retryAfter });
+    const limitBody = await reservation
+      .json<{ reason?: unknown; retryAfter?: unknown }>()
+      .catch(() => undefined);
+    const reason = typeof limitBody?.reason === 'string' ? limitBody.reason : 'rate_limited';
+    const retryAfter = reservation.headers.get('Retry-After') || String(
+      Number.isFinite(Number(limitBody?.retryAfter)) ? Number(limitBody?.retryAfter) : 30,
+    );
+    return json(
+      { error: 'Gateway rate limit exceeded', reason, retryAfter: Number(retryAfter) },
+      429,
+      origin,
+      { 'Retry-After': retryAfter },
+    );
   }
 
   const ticket = randomToken(32);

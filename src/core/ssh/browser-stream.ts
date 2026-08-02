@@ -219,8 +219,26 @@ async function requestRelayTicket(
       referrerPolicy: 'no-referrer',
       signal: controller.signal,
     });
-    const body = await response.json().catch(() => ({})) as Partial<RelayTicket> & { error?: string };
-    if (!response.ok) throw new Error(body.error || `Relay ticket failed (${response.status})`);
+    const body = await response.json().catch(() => ({})) as Partial<RelayTicket> & {
+      error?: string;
+      reason?: string;
+      retryAfter?: number;
+    };
+    if (!response.ok) {
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get('Retry-After') || body.retryAfter || 0);
+        const waitHint = Number.isFinite(retryAfter) && retryAfter > 0
+          ? ` Retry in about ${Math.ceil(retryAfter)} seconds.`
+          : '';
+        const detail = body.reason === 'too_many_sessions'
+          ? 'Too many active SSH sessions; close an unused terminal tab.'
+          : body.reason === 'ticket_rate_limited'
+            ? 'Too many new connections in a short period.'
+            : 'The relay is temporarily rate-limited.';
+        throw new Error(`${body.error || 'Gateway rate limit exceeded'} ${detail}${waitHint}`);
+      }
+      throw new Error(body.error || `Relay ticket failed (${response.status})`);
+    }
     if (
       body.protocol !== 'ohmyssh.v1' ||
       !body.sessionId?.match(/^[a-f0-9]{64}$/u) ||

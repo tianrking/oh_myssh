@@ -14,6 +14,11 @@ From the repository root:
 2. Set `ALLOWED_ORIGINS`, `ALLOWED_PORTS`, and preferably `ALLOWED_HOSTS` in
    `gateway/wrangler.toml`. The deployed Worker origin is allowed automatically; the origin
    list is for an optional Vercel static mirror.
+
+   The production defaults allow 30 ticket requests per minute and 16 active sessions per
+   signed browser login. Legacy bearer clients and requests without a valid browser session
+   use an IP/fingerprint bucket instead, so normal multi-server browser work is not limited
+   by other users sharing the same public IP.
 3. Authenticate Wrangler and store the production secrets as Cloudflare secrets:
 
    ```bash

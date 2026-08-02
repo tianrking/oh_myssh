@@ -12,6 +12,7 @@ export interface GatewayEnv {
   ALLOWED_PORTS?: string;
   ALLOWED_HOSTS?: string;
   TICKETS_PER_MINUTE?: string;
+  /** Active sessions per signed browser session; IP/fingerprint fallback for legacy clients. */
   MAX_SESSIONS_PER_IP?: string;
   TICKET_TTL_SECONDS?: string;
   CONNECT_TIMEOUT_MS?: string;

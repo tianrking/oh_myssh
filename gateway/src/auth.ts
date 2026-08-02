@@ -81,6 +81,11 @@ function cookieValue(request: Request, name: string): string | undefined {
   return undefined;
 }
 
+/** Return the signed browser-session cookie for internal rate-limit bucketing. */
+export function readSessionCookie(request: Request): string | undefined {
+  return cookieValue(request, AUTH_COOKIE_NAME);
+}
+
 async function signSession(payload: string, secret: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     'raw',
