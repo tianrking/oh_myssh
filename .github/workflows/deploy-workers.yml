@@ -24,6 +24,8 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       OH_MYSSH_ACCESS_TOKEN: ${{ secrets.OH_MYSSH_ACCESS_TOKEN }}
+      OH_MYSSH_LOGIN_PASSWORD_HASH: ${{ secrets.OH_MYSSH_LOGIN_PASSWORD_HASH }}
+      OH_MYSSH_SESSION_SECRET: ${{ secrets.OH_MYSSH_SESSION_SECRET }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,12 +48,22 @@ jobs:
       - name: Typecheck Worker
         run: npm run gateway:typecheck
 
-      - name: Deploy Worker and Assets
-        run: npx wrangler deploy --config gateway/wrangler.toml
-
       - name: Synchronize ACCESS_TOKEN secret
         shell: bash
         run: |
           test -n "$OH_MYSSH_ACCESS_TOKEN"
           printf '%s' "$OH_MYSSH_ACCESS_TOKEN" | npx wrangler secret put ACCESS_TOKEN \
             --config gateway/wrangler.toml
+
+      - name: Synchronize browser login secrets
+        shell: bash
+        run: |
+          test -n "$OH_MYSSH_LOGIN_PASSWORD_HASH"
+          test -n "$OH_MYSSH_SESSION_SECRET"
+          printf '%s' "$OH_MYSSH_LOGIN_PASSWORD_HASH" | npx wrangler secret put APP_LOGIN_PASSWORD_HASH \
+            --config gateway/wrangler.toml
+          printf '%s' "$OH_MYSSH_SESSION_SECRET" | npx wrangler secret put APP_SESSION_SECRET \
+            --config gateway/wrangler.toml
+
+      - name: Deploy Worker and Assets
+        run: npx wrangler deploy --config gateway/wrangler.toml

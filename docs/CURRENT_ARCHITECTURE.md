@@ -30,7 +30,9 @@ origin；Vercel 仍可作为静态镜像，但不承担 SSH 运行时。Cloudfla
 
 ## 已实现的安全边界
 
-- `ACCESS_TOKEN` 只用于申请中继 ticket；UI 仅把它保存在 `sessionStorage`。
+- Worker 使用 PBKDF2 密码记录验证产品登录，使用 `APP_SESSION_SECRET` 签发 HttpOnly
+  Cookie；浏览器用登录会话申请中继 ticket。`ACCESS_TOKEN` 仅保留给管理员/兼容客户端，
+  不进入普通用户 UI。
 - ticket 30 秒过期、一次消费，并放在 WebSocket subprotocol header，不进入 URL。
 - Worker 同时解析全部 A/AAAA；任一结果是私网或保留地址时整次请求失败。
 - TCP 连接使用已校验的具体 IP，不重新用 hostname 解析，避免常规 DNS rebinding。

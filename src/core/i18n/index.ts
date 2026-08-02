@@ -90,9 +90,9 @@ const en: Record<string, string> = {
 
   // Relay Settings Modal
   relaySettingsTitle: 'Cloudflare SSH TCP Relay',
-  relaySettingsSub: 'Configure the authenticated raw SSH TCP relay used by HTTPS deployments',
+  relaySettingsSub: 'The Worker login session authorizes the raw SSH TCP relay',
   relayWarningTitle: 'Web Environment Limitation',
-  relayWarningBody: 'Standard web pages cannot initiate raw TCP connections. Deploy the bundled authenticated Cloudflare Worker relay, then enter its HTTPS base URL and access token here. SSH credentials remain in this browser session.',
+  relayWarningBody: 'Standard web pages cannot initiate raw TCP connections. The unified Cloudflare Worker provides the relay; sign in to the Worker and keep SSH credentials in this browser session.',
   relayUrlLabel: 'Cloudflare Worker base URL',
   relayUrlPlaceholder: 'https://your-relay.workers.dev',
   applyRelay: 'Apply Relay Config',
@@ -128,7 +128,7 @@ const en: Record<string, string> = {
   connectErrorReasonText: 'Browser W3C security spec prohibits web pages from making raw TCP connections.',
   connectErrorSolutions: 'To connect to any real external SSH server, choose one of these solutions:',
   connectErrorSolution1: 'Chromium IWA Mode: Launch in a Chromium IWA with Direct Sockets support.',
-  connectErrorSolution2: 'Configure Cloudflare Relay: Click the relay button and enter your Worker HTTPS base URL plus access token.',
+  connectErrorSolution2: 'Use the unified Cloudflare Worker page and sign in before connecting. No local relay or download is required.',
   connectErrorSolution3: 'Try Demo Mode: Select a preset "Dev Test Server" in the sidebar for the built-in shell.',
 
   // DirectSockets indicator
@@ -217,9 +217,9 @@ const zhCN: Record<string, string> = {
 
   // Relay Settings Modal
   relaySettingsTitle: 'Cloudflare SSH TCP 中继',
-  relaySettingsSub: '配置 HTTPS 部署使用的鉴权原始 SSH TCP 中继',
+  relaySettingsSub: '网页登录会话会自动授权原始 SSH TCP 中继',
   relayWarningTitle: '纯前端网络限制提示',
-  relayWarningBody: '普通网页不能直接发起原始 TCP 连接。请先部署仓库内置的鉴权 Cloudflare Worker 中继，再在这里填写 Worker 的 HTTPS 基础地址和访问令牌；SSH 凭据只留在当前浏览器会话。',
+  relayWarningBody: '普通网页不能直接发起原始 TCP 连接。统一 Cloudflare Worker 会提供中继；登录 Worker 后即可使用，SSH 凭据只留在当前浏览器会话。',
   relayUrlLabel: 'Cloudflare Worker 基础地址',
   relayUrlPlaceholder: 'https://your-relay.workers.dev',
   applyRelay: '应用 Relay 配置',
@@ -255,7 +255,7 @@ const zhCN: Record<string, string> = {
   connectErrorReasonText: '浏览器 W3C 安全规范禁止普通网页直接发起原始 TCP 连接。',
   connectErrorSolutions: '要连接任意真实的外部 SSH 服务器，请选择以下任一解决方案：',
   connectErrorSolution1: 'Chromium IWA 模式：在支持 Direct Sockets 的 Chromium IWA 中启动包文件。',
-  connectErrorSolution2: '配置 Cloudflare Relay：点击顶部中继按钮，填写 Worker HTTPS 基础地址和访问令牌。',
+  connectErrorSolution2: '打开统一 Cloudflare Worker 页面并登录后再连接，不需要本地 relay 或下载程序。',
   connectErrorSolution3: '体验 Demo 环境：在侧边栏选择预置的"开发测试机"体验内置 Shell。',
 
   // DirectSockets indicator
@@ -344,9 +344,9 @@ const esES: Record<string, string> = {
 
   // Relay Settings Modal
   relaySettingsTitle: 'Relé TCP SSH de Cloudflare',
-  relaySettingsSub: 'Configure el relé TCP SSH autenticado usado por despliegues HTTPS',
+  relaySettingsSub: 'La sesión de inicio autoriza el relé TCP SSH del Worker',
   relayWarningTitle: 'Limitación del entorno web',
-  relayWarningBody: 'Las páginas web normales no pueden iniciar conexiones TCP directas. Despliegue el Worker de Cloudflare autenticado incluido y escriba aquí su URL base HTTPS y el token; las credenciales SSH permanecen en esta sesión del navegador.',
+  relayWarningBody: 'Las páginas web normales no pueden iniciar conexiones TCP directas. El Worker unificado de Cloudflare proporciona el relé; inicie sesión y mantenga las credenciales SSH solo en esta sesión del navegador.',
   relayUrlLabel: 'URL base del Worker de Cloudflare',
   relayUrlPlaceholder: 'https://your-relay.workers.dev',
   applyRelay: 'Aplicar configuración Relay',
@@ -382,7 +382,7 @@ const esES: Record<string, string> = {
   connectErrorReasonText: 'La especificación de seguridad W3C del navegador prohíbe las conexiones TCP directas desde páginas web.',
   connectErrorSolutions: 'Para conectarse a cualquier servidor SSH externo real, elija una de estas soluciones:',
   connectErrorSolution1: 'Modo Chromium IWA: Inicie en un Chromium IWA con soporte de Direct Sockets.',
-  connectErrorSolution2: 'Configurar Cloudflare Relay: escriba la URL base HTTPS de su Worker y el token de acceso.',
+  connectErrorSolution2: 'Abra la página del Worker unificado e inicie sesión; no se necesita un relé local ni una descarga.',
   connectErrorSolution3: 'Probar modo Demo: Seleccione un "Servidor de prueba" preconfigurado en la barra lateral para el shell integrado.',
 
   // DirectSockets indicator

@@ -1,3 +1,10 @@
+import {
+  createSessionCookie,
+  expiredSessionCookie,
+  hasValidSession,
+  parsePasswordBody,
+  verifyPassword,
+} from './auth';
 import { RateLimit } from './rate-limit';
 import { RelaySession } from './session';
 import {
@@ -28,6 +35,7 @@ function securityHeaders(origin?: string): Headers {
     headers.set('Access-Control-Allow-Origin', origin);
     headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    headers.set('Access-Control-Allow-Credentials', 'true');
     headers.set('Access-Control-Max-Age', '600');
   }
   return headers;
@@ -78,10 +86,79 @@ export async function clientRateLimitKey(request: Request): Promise<string> {
 }
 
 async function authorized(request: Request, env: GatewayEnv): Promise<boolean> {
-  if (!env.ACCESS_TOKEN) throw new RelayHttpError('Gateway ACCESS_TOKEN is not configured', 503);
+  if (await hasValidSession(request, env)) return true;
   const header = request.headers.get('Authorization') || '';
-  if (!header.startsWith('Bearer ')) return false;
-  return constantTimeTokenEqual(header.slice(7), env.ACCESS_TOKEN);
+  if (env.ACCESS_TOKEN && header.startsWith('Bearer ')) {
+    return constantTimeTokenEqual(header.slice(7), env.ACCESS_TOKEN);
+  }
+  if (!env.APP_LOGIN_PASSWORD_HASH || !env.APP_SESSION_SECRET) {
+    throw new RelayHttpError('Gateway login is not configured', 503);
+  }
+  return false;
+}
+
+async function releaseLoginAttempt(
+  limiter: DurableObjectStub,
+  attemptId: string,
+): Promise<void> {
+  await limiter.fetch('https://rate.internal/release', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: attemptId }),
+  }).catch(() => undefined);
+}
+
+async function login(request: Request, env: GatewayEnv, origin: string): Promise<Response> {
+  if (!env.APP_LOGIN_PASSWORD_HASH || !env.APP_SESSION_SECRET) {
+    throw new RelayHttpError('Gateway login is not configured', 503);
+  }
+  const body = await readBoundedJson<unknown>(request, 2048);
+  const password = parsePasswordBody(body);
+  const attemptId = env.SESSIONS.newUniqueId().toString();
+  const limiter = env.RATE_LIMITS.get(
+    env.RATE_LIMITS.idFromName(`login:${await clientRateLimitKey(request)}`),
+  );
+  const attemptsPerMinute = parsePositiveInt(env.LOGIN_ATTEMPTS_PER_MINUTE, 5, 1, 60);
+  const reservation = await limiter.fetch('https://rate.internal/reserve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: attemptId,
+      expiresAt: Date.now() + 60_000,
+      ticketsPerMinute: attemptsPerMinute,
+      maxSessions: 1,
+    }),
+  });
+  if (!reservation.ok) {
+    const retryAfter = reservation.headers.get('Retry-After') || '60';
+    return json({ error: 'Too many login attempts' }, 429, origin, { 'Retry-After': retryAfter });
+  }
+
+  try {
+    if (!(await verifyPassword(password, env.APP_LOGIN_PASSWORD_HASH))) {
+      return json({ error: 'Invalid login password' }, 401, origin);
+    }
+    const session = await createSessionCookie(env);
+    return json(
+      { authenticated: true, expiresAt: session.expiresAt },
+      200,
+      origin,
+      { 'Set-Cookie': session.header },
+    );
+  } finally {
+    await releaseLoginAttempt(limiter, attemptId);
+  }
+}
+
+async function sessionStatus(request: Request, env: GatewayEnv, origin: string): Promise<Response> {
+  if (!env.APP_LOGIN_PASSWORD_HASH || !env.APP_SESSION_SECRET) {
+    throw new RelayHttpError('Gateway login is not configured', 503);
+  }
+  return json({ authenticated: await hasValidSession(request, env) }, 200, origin);
+}
+
+function logout(origin: string): Response {
+  return json({ authenticated: false }, 200, origin, { 'Set-Cookie': expiredSessionCookie() });
 }
 
 async function createTicket(request: Request, env: GatewayEnv, origin: string): Promise<Response> {
@@ -205,6 +282,15 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: securityHeaders(origin!) });
 
     try {
+      if (url.pathname === '/api/auth/login' && request.method === 'POST') {
+        return await login(request, env, origin!);
+      }
+      if (url.pathname === '/api/auth/session' && request.method === 'POST') {
+        return await sessionStatus(request, env, origin!);
+      }
+      if (url.pathname === '/api/auth/logout' && request.method === 'POST') {
+        return logout(origin!);
+      }
       if (url.pathname === '/api/ticket' && request.method === 'POST') {
         return await createTicket(request, env, origin!);
       }

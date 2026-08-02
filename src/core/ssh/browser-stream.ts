@@ -209,15 +209,14 @@ async function requestRelayTicket(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const headers = new Headers({ 'Content-Type': 'application/json' });
+    if (endpoint.accessToken.trim()) headers.set('Authorization', `Bearer ${endpoint.accessToken.trim()}`);
     const response = await fetch(urls.ticketUrl, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${endpoint.accessToken.trim()}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({ host, port }),
       cache: 'no-store',
-      credentials: 'omit',
+      credentials: 'include',
       referrerPolicy: 'no-referrer',
       signal: controller.signal,
     });

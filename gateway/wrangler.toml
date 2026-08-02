@@ -37,7 +37,7 @@ tag = "v1"
 new_sqlite_classes = ["RelaySession", "RateLimit"]
 
 [secrets]
-required = ["ACCESS_TOKEN"]
+required = ["ACCESS_TOKEN", "APP_LOGIN_PASSWORD_HASH", "APP_SESSION_SECRET"]
 
 [observability]
 enabled = true

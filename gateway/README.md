@@ -14,12 +14,14 @@ From the repository root:
 2. Set `ALLOWED_ORIGINS`, `ALLOWED_PORTS`, and preferably `ALLOWED_HOSTS` in
    `gateway/wrangler.toml`. The deployed Worker origin is allowed automatically; the origin
    list is for an optional Vercel static mirror.
-3. Authenticate Wrangler and store the production token as a Cloudflare secret:
+3. Authenticate Wrangler and store the production secrets as Cloudflare secrets:
 
    ```bash
    npx wrangler login --config gateway/wrangler.toml
    npx wrangler whoami --config gateway/wrangler.toml
    npx wrangler secret put ACCESS_TOKEN --config gateway/wrangler.toml
+   npx wrangler secret put APP_LOGIN_PASSWORD_HASH --config gateway/wrangler.toml
+   npx wrangler secret put APP_SESSION_SECRET --config gateway/wrangler.toml
    ```
 
 4. Build and deploy the page and relay together:
@@ -38,9 +40,9 @@ curl https://ssh.w0x7ce.eu/health
 ```
 
 The JSON must contain `"ok":true`, `"service":"oh-myssh-relay"`, and
-`"deployment":"unified-workers"`. Open that same URL in the browser and leave the relay URL
-field empty; the UI discovers its same-origin Worker automatically. Only the access token is
-needed in the relay settings.
+`"deployment":"unified-workers"`. Open the production Worker URL in the browser; the page
+and relay are same-origin, and the login form establishes the HttpOnly session automatically.
+End users do not enter a Cloudflare access token or run a local relay.
 
 ## Local Worker development
 
@@ -51,11 +53,14 @@ LAN testing; its Vite middleware is a development-only relay and is not deployed
 
 ## Protocol boundary
 
-The browser requests a 30-second single-use ticket over HTTPS using `ACCESS_TOKEN`. The ticket
-is carried in the WebSocket subprotocol header, not in the URL. Before issuing it, the Worker
-resolves A and AAAA records, rejects the target if any answer is private/reserved, and pins the
-session to the validated address. Durable Objects enforce per-client ticket/session limits,
-backpressure, byte limits, idle timeout, and maximum session duration.
+The browser first signs in at `/api/auth/login` with the product password. The Worker verifies
+the PBKDF2-SHA-256 record and returns a signed, `HttpOnly; Secure; SameSite=Strict` session
+cookie. The browser then requests a 30-second single-use ticket over HTTPS with that cookie; a
+legacy `ACCESS_TOKEN` bearer remains accepted for administration and compatibility clients.
+The ticket is carried in the WebSocket subprotocol header, not in the URL. Before issuing it,
+the Worker resolves A and AAAA records, rejects the target if any answer is private/reserved,
+and pins the session to the validated address. Durable Objects enforce per-client ticket/
+session limits, backpressure, byte limits, idle timeout, and maximum session duration.
 
-Interactive Cloudflare Access login is not a required part of the browser flow: ticket requests
-intentionally omit cookies. Keep the bearer-token endpoint reachable by the application.
+Cloudflare Access is optional and is not required for the normal browser flow. End users never
+see or enter `ACCESS_TOKEN`, and they do not run a local relay.

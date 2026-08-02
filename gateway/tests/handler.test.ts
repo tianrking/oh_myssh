@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('cloudflare:sockets', () => ({ connect: vi.fn() }));
 
+import { createPasswordHash } from '../src/auth';
 import worker, { clientRateLimitKey } from '../src/index';
 
 function testEnv(assetsFetch: ReturnType<typeof vi.fn>) {
@@ -88,5 +89,55 @@ describe('unified Worker request boundary', () => {
     ]);
     expect(firstKey).toMatch(/^anon:[A-Za-z0-9_-]{43}$/u);
     expect(secondKey).toBe(firstKey);
+  });
+
+  it('logs in through the Worker and authorizes the browser session cookie', async () => {
+    const rateFetch = vi.fn(async (input: RequestInfo | URL) => {
+      return String(input).endsWith('/reserve')
+        ? Response.json({ allowed: true })
+        : Response.json({ ok: true });
+    });
+    const passwordHash = await createPasswordHash('fixture-password', new Uint8Array(16).fill(9), 50_000);
+    const env = {
+      ...testEnv(vi.fn()),
+      APP_LOGIN_PASSWORD_HASH: passwordHash,
+      APP_SESSION_SECRET: 'fixture-session-secret',
+      SESSIONS: { newUniqueId: () => ({ toString: () => 'a'.repeat(64) }) },
+      RATE_LIMITS: {
+        idFromName: vi.fn(() => ({ toString: () => 'login-bucket' })),
+        get: vi.fn(() => ({ fetch: rateFetch })),
+      },
+    } as any;
+    const login = await worker.fetch(
+      new Request('https://ssh.w0x7ce.eu/api/auth/login', {
+        method: 'POST',
+        headers: { Origin: 'https://ssh.w0x7ce.eu', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'fixture-password' }),
+      }),
+      env,
+    );
+    expect(login.status).toBe(200);
+    const cookie = login.headers.get('Set-Cookie');
+    expect(cookie).toMatch(/^ohmyssh_session=/u);
+
+    const session = await worker.fetch(
+      new Request('https://ssh.w0x7ce.eu/api/auth/session', {
+        method: 'POST',
+        headers: { Origin: 'https://ssh.w0x7ce.eu', Cookie: cookie || '' },
+      }),
+      env,
+    );
+    expect(session.status).toBe(200);
+    await expect(session.json()).resolves.toEqual({ authenticated: true });
+
+    const unauthorizedTicket = await worker.fetch(
+      new Request('https://ssh.w0x7ce.eu/api/ticket', {
+        method: 'POST',
+        headers: { Origin: 'https://ssh.w0x7ce.eu', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host: 'github.com', port: 22 }),
+      }),
+      env,
+    );
+    expect(unauthorizedTicket.status).toBe(401);
   });
 });

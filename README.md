@@ -7,9 +7,9 @@ Objects 会话，不需要在 Vercel 与 Worker 之间来回配置。
 当前已部署入口：<https://oh-myssh-relay.bkgr.workers.dev>
 正式产品域名：<https://ssh.w0x7ce.eu>
 
-打开上述地址即可使用完整服务；在“中继设置”中填入部署时生成的 `ACCESS_TOKEN`，
-Worker 地址留空即可自动使用当前页面的同源地址。令牌只保存在当前浏览器标签页的
-`sessionStorage`，不要写入 Git、README 或公开配置。
+打开正式产品域名即可使用完整服务：先输入产品登录密码，Worker 会建立 HttpOnly
+浏览器会话；之后输入自己的 SSH 服务器账号和密码/私钥即可连接。用户不需要下载、
+启动或安装任何本地 relay、Node、Wrangler 或 Docker，Worker 地址也不需要填写。
 
 ```text
 同一个 https://<worker>.workers.dev
@@ -71,17 +71,21 @@ ALLOWED_HOSTS = "ssh.example.com,*.servers.example.com"
 策略允许的公网目标，但私网、保留地址、TCP/25 和 Cloudflare 自身 IP 段仍会被拒绝。
 SSH DNS 记录必须使用 DNS-only，不能指向橙云代理地址。
 
-### 2. 登录并设置访问令牌
+### 2. 部署者设置 Worker 密钥
 
 ```bash
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
 npx wrangler login --config gateway/wrangler.toml
 npx wrangler whoami --config gateway/wrangler.toml
 npx wrangler secret put ACCESS_TOKEN --config gateway/wrangler.toml
+npx wrangler secret put APP_LOGIN_PASSWORD_HASH --config gateway/wrangler.toml
+npx wrangler secret put APP_SESSION_SECRET --config gateway/wrangler.toml
 ```
 
-令牌只写入 Cloudflare Secret，不要提交到 Git、`wrangler.toml`、Vercel 环境变量或
-URL。当前 Worker 仍要求访问令牌，这是避免公开代理被滥用的必要边界。
+这些值只写入 Cloudflare Secret 或 GitHub Actions Secret，不要提交到 Git、
+`wrangler.toml`、前端环境变量或 URL。`APP_LOGIN_PASSWORD_HASH` 是产品登录密码的
+PBKDF2-SHA-256 记录，`APP_SESSION_SECRET` 用于签名 HttpOnly 会话 Cookie；密码明文
+不会进入代码或构建产物。最终用户只看到网页登录页，不需要查看 Cloudflare token。
 
 ### 3. 一键构建并部署完整服务
 
@@ -97,9 +101,8 @@ curl https://<worker>.workers.dev/health
 ```
 
 应看到 `"ok":true`、`"service":"oh-myssh-relay"` 和
-`"deployment":"unified-workers"`。打开同一个地址即可使用页面；在中继设置里
-只需填写 `ACCESS_TOKEN`，Worker 地址可以留空，前端会自动使用当前页面同源地址。
-生产环境优先打开 `https://ssh.w0x7ce.eu`；`workers.dev` 地址保留作回退和运维检查。
+`"deployment":"unified-workers"`。生产环境打开 `https://ssh.w0x7ce.eu`，
+输入产品登录密码后即可使用；`workers.dev` 地址只保留作回退和运维检查。
 
 ### 4. 第一次连接
 
@@ -114,12 +117,11 @@ curl https://<worker>.workers.dev/health
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
 ```
 
-## 可选：Vercel 静态镜像
+## Vercel 不是生产入口
 
-Vercel 仍可部署 `main` 分支的 `dist`，但它只是前端镜像。Vercel 页面会自动把
-SSH 中继回退到正式的 `https://ssh.w0x7ce.eu`；页面和 Worker 都不需要本地运行任何
-程序。浏览器仍必须在“中继设置”中填写 `ACCESS_TOKEN`，因为不能把公开 Worker
-密钥打包进网页；Vercel 本身不能替代 Worker 连接公网 TCP/22。
+生产产品不依赖 Vercel。用户应直接打开 `https://ssh.w0x7ce.eu`，页面、ticket、
+WebSocket TCP 中继和 Durable Objects 全部来自同一个 Cloudflare Worker。Vercel
+如果仍连接着仓库，也只是历史静态镜像，不承担 SSH 运行时。
 
 仓库已包含 `vercel.json`：
 
@@ -131,7 +133,8 @@ GitHub SSH push 会触发 Vercel 的静态部署，但 Worker 部署必须执行
 `npm run workers:deploy`，除非你额外配置了 GitHub Actions 的 Cloudflare secrets。
 
 仓库已经提供 `.github/workflows/deploy-workers.yml`。配置
-`CLOUDFLARE_API_TOKEN` 和 `OH_MYSSH_ACCESS_TOKEN` 两个 GitHub Actions secrets 后，
+`CLOUDFLARE_API_TOKEN`、`OH_MYSSH_ACCESS_TOKEN`、`OH_MYSSH_LOGIN_PASSWORD_HASH` 和
+`OH_MYSSH_SESSION_SECRET` 四个 GitHub Actions secrets 后，
 推送 `main` 会自动测试、构建并发布同一个完整 Worker（Account ID 已固定在
 `gateway/wrangler.toml`）；
 工作流不会把令牌写入 Git 或前端产物。
@@ -143,7 +146,8 @@ GitHub SSH push 会触发 Vercel 的静态部署，但 Worker 部署必须执行
   传输元数据和原始协议字节，但不终止或解密 SSH。
 - ticket 30 秒过期且只能消费一次，通过 WebSocket subprotocol 传递，不进入 URL。
 - Worker 校验全部 A/AAAA 结果并固定到已校验 IP，阻断私网、保留地址与常规 DNS rebinding。
-- 密码和私钥不会持久化；访问令牌只保存在当前浏览器标签页的 sessionStorage。
+- 产品登录密码只用于 Worker 登录；登录后的会话由 HttpOnly Cookie 保护。SSH 密码和
+  私钥不会持久化，Cloudflare relay 凭据不暴露给普通用户。
 
 ## 明确限制
 

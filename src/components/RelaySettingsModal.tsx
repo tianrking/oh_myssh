@@ -18,19 +18,17 @@ export const RelaySettingsModal: React.FC<Props> = ({
   onSaveRelay,
 }) => {
   const [relayUrl, setRelayUrl] = useState(currentRelayUrl || '');
-  const [accessToken, setAccessToken] = useState(currentAccessToken || '');
 
   useEffect(() => {
     if (!isOpen) return;
     setRelayUrl(currentRelayUrl || '');
-    setAccessToken(currentAccessToken || '');
   }, [isOpen, currentRelayUrl, currentAccessToken]);
 
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveRelay(relayUrl.trim(), accessToken.trim());
+    onSaveRelay(relayUrl.trim(), '');
     onClose();
   };
 
@@ -81,22 +79,9 @@ export const RelaySettingsModal: React.FC<Props> = ({
             />
           </div>
 
-          <div>
-            <label className="block text-slate-400 mb-1.5 font-medium">
-              中继访问令牌
-            </label>
-            <input
-              type="password"
-              value={accessToken}
-              onChange={(event) => setAccessToken(event.target.value)}
-              placeholder="Cloudflare ACCESS_TOKEN"
-              autoComplete="off"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950/60 p-2.5 font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
-            />
-            <p className="mt-1.5 text-[10px] text-slate-500">
-              正式 Workers 页面会自动发现同源中继；Vercel 镜像也会自动回退到 ssh.w0x7ce.eu，地址通常可以留空。中继访问令牌仍必须填写，令牌只保存在当前标签页，不能把它打包进公开网页或 VITE_* 环境变量。
-            </p>
-          </div>
+          <p className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-[11px] leading-relaxed text-emerald-200">
+            当前 Worker 使用网页登录会话授权，中继访问令牌由服务端保管，用户不需要查看、复制或填写 Cloudflare token。
+          </p>
 
           <div className="flex justify-end gap-3 pt-3">
             <button

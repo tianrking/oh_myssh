@@ -10,7 +10,9 @@ import { BroadcastInputBar } from './components/BroadcastInputBar';
 import { SnippetManagerModal } from './components/SnippetManagerModal';
 import { ThemeManagerModal } from './components/ThemeManagerModal';
 import { RelaySettingsModal } from './components/RelaySettingsModal';
+import { AuthGate } from './components/AuthGate';
 import { t, subscribeLanguageChange } from './core/i18n';
+import { getBrowserAuthState, type BrowserAuthState } from './core/auth';
 import { sessionRegistry } from './core/session/registry';
 import { Terminal, HardDrive, Lock, Plus } from 'lucide-react';
 
@@ -27,6 +29,7 @@ const THEME_STORAGE_KEY = 'ohmyssh.theme';
 type QuickConnectIntent = { mode: 'ssh' | 'sftp'; host?: HostProfile };
 
 export function App() {
+  const [authState, setAuthState] = useState<BrowserAuthState | 'checking'>('checking');
   const [hosts, setHosts] = useState<HostProfile[]>([]);
   const [snippets, setSnippets] = useState<QuickSnippet[]>([]);
   const [tabs, setTabs] = useState<TabItem[]>([]);
@@ -62,6 +65,23 @@ export function App() {
     }
   });
   const [, setLangTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hostname = typeof window === 'undefined' ? '' : window.location.hostname;
+    if (['localhost', '127.0.0.1', '[::1]'].includes(hostname)) {
+      setAuthState('authenticated');
+      return () => {
+        cancelled = true;
+      };
+    }
+    void getBrowserAuthState().then((next) => {
+      if (!cancelled) setAuthState(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     return subscribeLanguageChange(() => {
@@ -310,6 +330,10 @@ export function App() {
   }, [activeTabId, tabs, handleCloseTab, handleSelectTab, openQuickConnect]);
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
+
+  if (authState !== 'authenticated') {
+    return <AuthGate status={authState} onAuthenticated={() => setAuthState('authenticated')} />;
+  }
 
   return (
     <div className="flex h-screen w-screen flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans">
