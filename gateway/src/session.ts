@@ -8,6 +8,20 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Normalize the binary payload shapes used by the Workers WebSocket runtime. */
+export async function webSocketDataToBytes(data: unknown): Promise<Uint8Array | null> {
+  if (data instanceof ArrayBuffer || Object.prototype.toString.call(data) === '[object ArrayBuffer]') {
+    return new Uint8Array(data as ArrayBuffer);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    return new Uint8Array(await data.arrayBuffer());
+  }
+  return null;
+}
+
 export class RelaySession {
   constructor(
     private readonly state: DurableObjectState,
@@ -172,7 +186,7 @@ export class RelaySession {
       await this.release(record);
     };
 
-    webSocket.addEventListener('message', (event) => {
+    const handleMessage = async (event: MessageEvent): Promise<void> => {
       lastActivity = Date.now();
       if (typeof event.data === 'string') {
         if (event.data.length > 1024) {
@@ -205,11 +219,10 @@ export class RelaySession {
         return;
       }
 
-      const bytes = event.data instanceof ArrayBuffer
-        ? new Uint8Array(event.data)
-        : ArrayBuffer.isView(event.data)
-          ? new Uint8Array(event.data.buffer, event.data.byteOffset, event.data.byteLength)
-          : null;
+      // Cloudflare's WebSocket runtime can expose browser binary frames as either
+      // ArrayBuffer, a typed-array view, or Blob depending on the edge/runtime path.
+      // Normalize all three forms before enforcing the frame limit.
+      const bytes = await webSocketDataToBytes(event.data);
       if (!bytes || bytes.byteLength === 0 || bytes.byteLength > maxFrameBytes) {
         void shutdown(1009, 'Invalid frame size');
         return;
@@ -232,6 +245,12 @@ export class RelaySession {
         .finally(() => {
           queuedBytes -= copy.byteLength;
         });
+    };
+    let messageTail = Promise.resolve();
+    webSocket.addEventListener('message', (event) => {
+      messageTail = messageTail
+        .then(() => handleMessage(event))
+        .catch((error) => shutdown(1009, errorMessage(error)));
     });
     webSocket.addEventListener('close', () => void shutdown());
     webSocket.addEventListener('error', () => void shutdown(1011, 'WebSocket transport error'));
