@@ -1,5 +1,6 @@
 name = "oh-myssh-relay"
 main = "src/index.ts"
+account_id = "1d5bd2f51fe8f092d47122e4f4636643"
 compatibility_date = "2026-07-01"
 workers_dev = true
 

@@ -128,8 +128,9 @@ GitHub SSH push 会触发 Vercel 的静态部署，但 Worker 部署必须执行
 `npm run workers:deploy`，除非你额外配置了 GitHub Actions 的 Cloudflare secrets。
 
 仓库已经提供 `.github/workflows/deploy-workers.yml`。配置
-`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` 和 `OH_MYSSH_ACCESS_TOKEN` 三个
-GitHub Actions secrets 后，推送 `main` 会自动测试、构建并发布同一个完整 Worker；
+`CLOUDFLARE_API_TOKEN` 和 `OH_MYSSH_ACCESS_TOKEN` 两个 GitHub Actions secrets 后，
+推送 `main` 会自动测试、构建并发布同一个完整 Worker（Account ID 已固定在
+`gateway/wrangler.toml`）；
 工作流不会把令牌写入 Git 或前端产物。
 
 ## 安全边界

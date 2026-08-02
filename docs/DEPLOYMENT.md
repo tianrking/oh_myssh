@@ -81,15 +81,14 @@ curl https://你的-worker.workers.dev/health
 ## 4. 可选：GitHub Actions 自动部署
 
 仓库已包含 `.github/workflows/deploy-workers.yml`。在 GitHub 仓库的
-Settings → Secrets and variables → Actions 中添加以下三个 Repository secrets：
+Settings → Secrets and variables → Actions 中添加以下两个 Repository secrets：
 
 - `CLOUDFLARE_API_TOKEN`：具备该 Worker 部署权限的 Cloudflare API Token。
-- `CLOUDFLARE_ACCOUNT_ID`：Cloudflare Account ID。
 - `OH_MYSSH_ACCESS_TOKEN`：浏览器在“中继设置”中填写的访问令牌。
 
 之后推送到 `main` 会先运行完整测试、构建静态 Assets、检查 Worker 类型，再部署同一个
 Worker 并同步 `ACCESS_TOKEN` Secret。首次部署前也可以手动执行 `workflow_dispatch`；
-工作流不会把任何令牌写入 Git 或构建产物。
+Account ID 已写入 `gateway/wrangler.toml`，工作流不会把任何令牌写入 Git 或构建产物。
 
 ## 5. 可选：部署 Vercel 静态镜像
 
