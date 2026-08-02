@@ -4,6 +4,12 @@
 SSH ticket API、WebSocket TCP 中继和 Durable Objects。Vercel 只能作为可选的静态
 镜像，不能替代 Worker 连接公网 TCP/22。
 
+当前生产实例：<https://oh-myssh-relay.bkgr.workers.dev>
+
+打开该地址即可进入页面。Worker 基础地址可以留空（前端会自动使用当前页面的同源
+地址），只需在“中继设置”中填入 Cloudflare Secret `ACCESS_TOKEN` 对应的令牌。
+令牌不要提交到 Git 或写入文档；真实 SSH 登录仍需填写你的服务器账号、密码或私钥。
+
 ## 1. 本地验收
 
 ```bash
