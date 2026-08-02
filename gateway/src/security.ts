@@ -291,12 +291,18 @@ export function originAllowed(origin: string | null, value: string | undefined):
 }
 
 async function queryDns(host: string, type: 'A' | 'AAAA', fetcher: typeof fetch): Promise<DnsJson> {
-  const url = new URL('https://cloudflare-dns.com/dns-query');
+  // Workers cannot make subrequests to Cloudflare-owned IP ranges (the
+  // cloudflare-dns.com endpoint is therefore rejected in production). Google
+  // Public DNS exposes the same DNS-over-HTTPS JSON shape without that limit.
+  const url = new URL('https://dns.google/resolve');
   url.searchParams.set('name', host);
   url.searchParams.set('type', type);
+  // Workers' edge Fetch implementation does not support redirect: "error".
+  // Manual handling keeps redirects from silently escaping the resolver while
+  // remaining compatible with the production runtime.
   const response = await fetcher(url, {
     headers: { Accept: 'application/dns-json' },
-    redirect: 'error',
+    redirect: 'manual',
   });
   if (!response.ok) throw new RelayHttpError('DNS validation service failed', 502);
   const body = await response.json<DnsJson>();

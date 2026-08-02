@@ -86,6 +86,11 @@ describe('DNS pinning', () => {
       port: 22,
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.map(([input]) => new URL(String(input)).hostname)).toEqual([
+      'dns.google',
+      'dns.google',
+    ]);
+    expect(fetcher.mock.calls.every(([, init]) => init?.redirect === 'manual')).toBe(true);
   });
 
   it('fails closed if any DNS answer is private', async () => {
