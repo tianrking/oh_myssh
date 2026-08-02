@@ -116,6 +116,7 @@ export const TerminalView: React.FC<Props> = ({
       setStatus('error');
       setTransportName('SSH Failed');
       setConnectionMode('error');
+      setStatusLine(`SSH failed: ${message.split('\\n')[0].slice(0, 180)}`);
       engine1.terminal.writeln('');
       engine1.terminal.writeln('\x1b[1;31m╔══════════════════════════════════════════════════════╗\x1b[0m');
       engine1.terminal.writeln('\x1b[1;31m║  SSH 连接失败                                        ║\x1b[0m');
