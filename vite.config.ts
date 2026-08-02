@@ -2,15 +2,17 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { createWsTcpRelayPlugin } from './scripts/vite-ws-tcp-relay';
 
-const empty = path.resolve(__dirname, 'src/shims/empty.js');
+const projectDir = path.dirname(fileURLToPath(import.meta.url));
+const empty = path.resolve(projectDir, 'src/shims/empty.js');
 
 export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss(), createWsTcpRelayPlugin()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(projectDir, './src'),
       ...(mode === 'test' ? {} : { buffer: 'buffer/' }),
       events: 'events/',
       'node-rsa': empty,

@@ -1,4 +1,5 @@
 export interface GatewayEnv {
+  ASSETS?: Fetcher;
   SESSIONS: DurableObjectNamespace;
   RATE_LIMITS: DurableObjectNamespace;
   ACCESS_TOKEN?: string;

@@ -1,24 +1,60 @@
-# Oh My SSH encrypted TCP relay
+# Oh My SSH unified Cloudflare Worker
 
-This Cloudflare Worker relays raw TCP bytes. SSH negotiation, host-key verification,
-password/private-key authentication, shell encryption, and SFTP all run in the browser.
-The relay never receives SSH credentials.
+This directory contains the complete production service. One Worker serves the compiled SPA
+from Workers Assets and handles the HTTPS ticket API, WebSocket byte relay, and Durable Object
+session state. The browser performs SSH key exchange, host-key verification, authentication,
+PTY, encryption, and SFTP; the relay never receives SSH credentials or decrypts SSH payloads.
 
-## Deploy
+## Deploy the complete service
 
-1. Copy `.dev.vars.example` to `.dev.vars` for local development and replace the token.
-2. Edit `ALLOWED_ORIGINS`, `ALLOWED_PORTS`, and preferably `ALLOWED_HOSTS` in
-   `wrangler.toml`.
-3. Run `npm run gateway:typecheck`, then `npm run gateway:dev`.
-4. Set the production secret with `npx wrangler secret put ACCESS_TOKEN --config gateway/wrangler.toml`.
-5. Deploy with `npm run gateway:deploy`.
+From the repository root:
 
-The browser requests a 30-second ticket over HTTPS using the access token. The ticket is
-single-use and carried in the WebSocket subprotocol header, not in the URL. Before a ticket
-is issued, the Worker resolves A and AAAA records, rejects the whole target if any address is
-private/reserved, and pins the session to one validated address. Per-client ticket and active
-session limits are stored in Durable Objects.
+1. Copy `gateway/.dev.vars.example` to `gateway/.dev.vars` only for local development and
+   replace the token.
+2. Set `ALLOWED_ORIGINS`, `ALLOWED_PORTS`, and preferably `ALLOWED_HOSTS` in
+   `gateway/wrangler.toml`. The deployed Worker origin is allowed automatically; the origin
+   list is for an optional Vercel static mirror.
+3. Authenticate Wrangler and store the production token as a Cloudflare secret:
 
-You may use a custom domain for the Worker. The browser ticket request intentionally omits
-cookies, so interactive Cloudflare Access login is not currently a supported mandatory
-boundary. Keep at least one endpoint reachable by the application's bearer-token flow.
+   ```bash
+   npx wrangler login --config gateway/wrangler.toml
+   npx wrangler whoami --config gateway/wrangler.toml
+   npx wrangler secret put ACCESS_TOKEN --config gateway/wrangler.toml
+   ```
+
+4. Build and deploy the page and relay together:
+
+   ```bash
+   npm run workers:deploy
+   ```
+
+The command is equivalent to `npm run build && wrangler deploy --config gateway/wrangler.toml`.
+The returned `https://<worker>.workers.dev` URL is the single application URL. Verify it before
+using the UI:
+
+```bash
+curl https://<worker>.workers.dev/health
+```
+
+The JSON must contain `"ok":true`, `"service":"oh-myssh-relay"`, and
+`"deployment":"unified-workers"`. Open that same URL in the browser and leave the relay URL
+field empty; the UI discovers its same-origin Worker automatically. Only the access token is
+needed in the relay settings.
+
+## Local Worker development
+
+Run `npm run gateway:typecheck` and `npm run gateway:dev` after building `dist`. Production
+targets must be public DNS-only SSH endpoints. The Worker deliberately rejects private,
+reserved, loopback, Cloudflare-owned, and disallowed port targets. Use `npm run dev` for local
+LAN testing; its Vite middleware is a development-only relay and is not deployed here.
+
+## Protocol boundary
+
+The browser requests a 30-second single-use ticket over HTTPS using `ACCESS_TOKEN`. The ticket
+is carried in the WebSocket subprotocol header, not in the URL. Before issuing it, the Worker
+resolves A and AAAA records, rejects the target if any answer is private/reserved, and pins the
+session to the validated address. Durable Objects enforce per-client ticket/session limits,
+backpressure, byte limits, idle timeout, and maximum session duration.
+
+Interactive Cloudflare Access login is not a required part of the browser flow: ticket requests
+intentionally omit cookies. Keep the bearer-token endpoint reachable by the application.

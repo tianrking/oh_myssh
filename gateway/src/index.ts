@@ -39,6 +39,20 @@ function json(body: unknown, status = 200, origin?: string, extra?: HeadersInit)
   return new Response(JSON.stringify(body), { status, headers });
 }
 
+function originAllowedForRequest(request: Request, env: GatewayEnv): boolean {
+  const origin = request.headers.get('Origin');
+  if (!origin) return false;
+  try {
+    // The unified Workers deployment serves the page and relay from one
+    // origin. Keep this independent of the generated workers.dev hostname;
+    // ALLOWED_ORIGINS remains available for an optional Vercel UI.
+    if (new URL(origin).origin === new URL(request.url).origin) return true;
+  } catch {
+    return false;
+  }
+  return originAllowed(origin, env.ALLOWED_ORIGINS);
+}
+
 function clientIp(request: Request): string {
   const ip = request.headers.get('CF-Connecting-IP')?.trim();
   if (ip) return ip;
@@ -156,12 +170,20 @@ export default {
         ok: true,
         service: 'oh-myssh-relay',
         protocol: 'ohmyssh.v1',
+        deployment: env.ASSETS ? 'unified-workers' : 'relay-only',
         credentialPath: 'browser-only SSH encryption',
       });
     }
 
+    // Static assets are public and browser navigations do not send an Origin
+    // header. Serve the unified Worker UI before applying API CORS checks.
+    if (!url.pathname.startsWith('/api/')) {
+      if (env.ASSETS) return env.ASSETS.fetch(request);
+      return json({ error: 'Static assets binding is not configured' }, 503);
+    }
+
     const origin = request.headers.get('Origin');
-    if (!originAllowed(origin, env.ALLOWED_ORIGINS)) {
+    if (!originAllowedForRequest(request, env)) {
       return json({ error: 'Origin is not allowed' }, 403);
     }
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: securityHeaders(origin!) });

@@ -1,13 +1,14 @@
 # 当前已实现架构
 
-状态：本地协议互操作、构建与浏览器 UI 已实现并验证；公网 Worker → 真实 VPS 需按部署环境验收
+状态：本地协议互操作、构建与浏览器 UI 已实现并验证；推荐使用同一 Cloudflare Worker
+托管 UI 与 relay，公网 Worker → 真实 VPS 仍需按目标服务器验收
 更新：2026-08-01
 
 ## 数据路径
 
 ```mermaid
 flowchart LR
-  UI["Vercel 静态 UI"]
+  UI["Cloudflare Worker 静态 Assets\n可选 Vercel 镜像"]
   SSH["浏览器 SSH 引擎\nKEX / host key / auth / PTY / SFTP"]
   API["Cloudflare Worker\n鉴权 / 目标策略 / 一次性 ticket"]
   DO["每会话 Durable Object\nSSH 字节流背压 / 限额 / 超时"]
@@ -20,8 +21,9 @@ flowchart LR
   DO -->|"cloudflare:sockets: 固定已校验 IP"| VPS
 ```
 
-普通 HTTPS 页面不能直接打开 TCP/22，所以 Vercel 只负责静态 UI，Cloudflare
-Worker 只负责原始 TCP 中继，不终止或解密 SSH。它可见客户端 IP、目标地址、访问
+纯 Workers 部署下，页面、ticket API、WebSocket relay 和 Durable Objects 来自同一个
+origin；Vercel 仍可作为静态镜像，但不承担 SSH 运行时。Cloudflare Worker 只负责
+原始 TCP 中继，不终止或解密 SSH。它可见客户端 IP、目标地址、访问
 令牌、流量时序、SSH identification/KEX 等传输元数据和原始协议字节；SSH 密码、
 私钥、主机密钥判断和 SFTP 数据解释都在浏览器端完成，KEX 后的认证与会话内容
 保持端到端加密。
@@ -37,7 +39,7 @@ Worker 只负责原始 TCP 中继，不终止或解密 SSH。它可见客户端 
 - 浏览器对 SSH host key 做严格 TOFU：首次和变化都暂停确认，只有接受后才保存；
   拒绝变化不会覆盖旧指纹。
 - Worker 到浏览器使用逐帧 ACK 背压；浏览器到 Worker 使用串行 writer 和队列上限。
-- Vercel/静态服务器设置 CSP、HSTS、frame deny、nosniff、no-referrer 等安全头。
+- Workers Assets 与可选的 Vercel 静态服务器设置 CSP、HSTS、frame deny、nosniff、no-referrer 等安全头。
 - 已移除会接收明文 SSH 凭据并可拨任意目标的旧 Node WebSSH gateway。
 
 ## SSH 与文件能力

@@ -106,10 +106,25 @@ function status(options: SshConnectOptions, message: string): void {
   options.onStatus?.(message);
 }
 
-function environmentRelayUrl(): string {
+async function environmentRelayUrl(): Promise<string> {
   try {
     const env = (import.meta as ImportMeta & { env?: Record<string, string> }).env;
-    return (env?.VITE_SSH_RELAY || '').trim();
+    const configured = (env?.VITE_SSH_RELAY || '').trim();
+    if (configured) return configured;
+  } catch {
+    // Continue with same-origin Worker discovery below.
+  }
+
+  if (isLocalDevelopmentOrigin()) return '';
+  try {
+    const origin = window.location.origin;
+    const response = await fetch(`${origin}/health`, {
+      cache: 'no-store',
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+    });
+    const body = await response.json().catch(() => ({})) as { service?: string };
+    return response.ok && body.service === 'oh-myssh-relay' ? origin : '';
   } catch {
     return '';
   }
@@ -196,7 +211,7 @@ export async function connectSftpOverStream(
 
 async function openConfiguredTransport(options: SshConnectOptions): Promise<OpenedTransport> {
   const timeoutMs = Math.max(5_000, Math.min(options.connectTimeoutMs || 25_000, 60_000));
-  const relayUrl = options.relayUrl?.trim() || environmentRelayUrl();
+  const relayUrl = options.relayUrl?.trim() || (await environmentRelayUrl());
 
   if (hasDirectSockets()) {
     status(options, `Direct TCP · ${options.auth.username}@${options.host}:${options.port}`);
