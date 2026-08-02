@@ -56,7 +56,10 @@ export const TerminalView: React.FC<Props> = ({
   const [transportName, setTransportName] = useState('Connecting…');
   const [connectionMode, setConnectionMode] = useState<string>('connecting');
   const [connectedTime, setConnectedTime] = useState('');
-  const [useWebGL, setUseWebGL] = useState(true);
+  // Canvas is the reliable baseline across managed/remote browsers. WebGL remains
+  // available as an explicit opt-in because some Chromium GPU paths load the addon
+  // successfully but render a blank terminal.
+  const [useWebGL, setUseWebGL] = useState(false);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'closed' | 'error'>('connecting');
   const [statusLine, setStatusLine] = useState('');
 

@@ -883,7 +883,7 @@ export class OfflineShellEngine {
       'OS: Oh My SSH Offline OS',
       'Kernel: WASM Shell 2.0',
       'Shell: zsh 5.9 (offline)',
-      'Terminal: xterm.js WebGL',
+      'Terminal: xterm.js Canvas (WebGL optional)',
       'CPU: Browser V8 / JSCore',
       'Memory: Managed heap',
       `Uptime: session active`,

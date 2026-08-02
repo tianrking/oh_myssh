@@ -129,7 +129,6 @@ export class TerminalEngine {
   public mount(container: HTMLElement) {
     this.containerElement = container;
     this.terminal.open(container);
-    void this.enableWebGL();
     this.bindInputOptimizations(container);
 
     // Fit after layout settles

@@ -433,8 +433,8 @@ export function App() {
               <div className="grid grid-cols-3 gap-4 max-w-xl w-full mb-8 text-left">
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                   <Terminal className="h-5 w-5 text-cyan-400 mb-2" />
-                  <h4 className="text-xs font-semibold text-slate-200">xterm.js WebGL</h4>
-                  <p className="text-[11px] text-slate-500 mt-1">帧批处理 + 低延迟输入</p>
+                  <h4 className="text-xs font-semibold text-slate-200">xterm.js Canvas / WebGL</h4>
+                  <p className="text-[11px] text-slate-500 mt-1">Canvas 稳定渲染，WebGL 可选加速</p>
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                   <Lock className="h-5 w-5 text-emerald-400 mb-2" />
